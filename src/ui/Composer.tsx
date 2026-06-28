@@ -6,13 +6,12 @@ import styles from './Composer.module.css';
 export function Composer() {
   const [text, setText] = useState('');
   const sendUserMessage = useRoom((s) => s.sendUserMessage);
-  const sending = useRoom((s) => s.sending);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const pending = text;
     setText('');
-    void sendUserMessage(pending);
+    sendUserMessage(pending);
   };
 
   return (
@@ -24,7 +23,7 @@ export function Composer() {
         placeholder="say something…"
         autoFocus
       />
-      <button className={styles.send} type="submit" disabled={sending}>
+      <button className={styles.send} type="submit">
         send
       </button>
     </form>

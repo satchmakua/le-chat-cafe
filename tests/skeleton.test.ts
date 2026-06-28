@@ -11,20 +11,28 @@ describe('formatTimestamp', () => {
 });
 
 describe('MockProvider (the LLMProvider seam)', () => {
-  it('streams tokens that reassemble into the reply and ends with a done frame', async () => {
-    const provider = new MockProvider({ delayMs: 0 });
+  async function drain(provider: MockProvider): Promise<ChatChunk[]> {
     const chunks: ChatChunk[] = [];
-
     for await (const chunk of provider.chat({
       model: 'mock',
       messages: [{ role: 'user', content: 'hello there' }],
     })) {
       chunks.push(chunk);
     }
+    return chunks;
+  }
 
+  it('streams tokens that reassemble into a non-empty line ending with one done frame', async () => {
+    const chunks = await drain(new MockProvider({ delayMs: 0, rng: () => 0 }));
     const text = chunks.map((c) => c.token).join('');
-    expect(text).toContain('hello there');
+    expect(text.length).toBeGreaterThan(0);
     expect(chunks.at(-1)?.done).toBe(true);
     expect(chunks.filter((c) => c.done)).toHaveLength(1);
+  });
+
+  it('is deterministic for a pinned rng', async () => {
+    const a = (await drain(new MockProvider({ delayMs: 0, rng: () => 0 }))).map((c) => c.token).join('');
+    const b = (await drain(new MockProvider({ delayMs: 0, rng: () => 0 }))).map((c) => c.token).join('');
+    expect(a).toBe(b);
   });
 });

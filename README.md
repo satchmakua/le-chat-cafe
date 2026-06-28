@@ -10,24 +10,37 @@ you, they talk to *each other*, and (later milestones) they remember how they fe
 about you across sessions. Lurk, jump in, or open the playground and tune the room
 like an instrument.
 
-**Status:** _early scaffold (M0)_ — see [ROADMAP.md](ROADMAP.md) for the plan and
-[PROGRESS.md](PROGRESS.md) for what's shipped.
+**Status:** _M1 — multi-persona room with the Conductor_ — see [ROADMAP.md](ROADMAP.md)
+for the plan and [PROGRESS.md](PROGRESS.md) for what's shipped.
 
 ---
 
 ## Run it
 
-**Prerequisites:** Node.js ≥ 22 (check: `node -v`). No Ollama required yet — M0 runs
-against a built-in `MockProvider`. Real local models arrive in M1 (you'll then need
-[Ollama](https://ollama.com) running locally).
+**Prerequisites:** Node.js ≥ 22 (check: `node -v`). For real personas, install
+[Ollama](https://ollama.com) and pull the model the personas use:
+
+```bash
+ollama pull llama3.2:3b
+```
+
+Ollama must allow the browser origin or the fetch is CORS-blocked. Start it with:
+
+```bash
+# macOS/Linux: OLLAMA_ORIGINS=* ollama serve
+# Windows (PowerShell): $env:OLLAMA_ORIGINS='*'; ollama serve
+```
+
+Without Ollama the app still runs — it falls back to a built-in `MockProvider` (the
+header shows `● mock` vs `● ollama`) so you can see the Conductor take turns.
 
 ```bash
 npm install     # once
 npm run dev     # start it → open the printed URL (default http://localhost:5173)
 ```
 
-Type a message and press **send**: the café's resident persona streams a reply back
-token-by-token. It hot-reloads as you edit.
+Type a message and the room responds — personas reply to you and to each other,
+streaming token-by-token. Leave it idle and someone breaks the silence.
 
 ### Commands
 
