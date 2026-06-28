@@ -1,0 +1,49 @@
+.app {
+  display: grid;
+  grid-template-columns: 180px 1fr 180px;
+  height: 100vh;
+}
+
+.channels {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.logo {
+  color: var(--accent);
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.channels ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.channels li {
+  padding: 4px 6px;
+  color: var(--dim);
+  border-radius: 3px;
+}
+
+.active {
+  color: var(--fg) !important;
+  background: rgba(79, 174, 79, 0.12);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topic {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+}

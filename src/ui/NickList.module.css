@@ -1,0 +1,26 @@
+.nicks {
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  padding: 12px;
+}
+
+.header {
+  color: var(--dim);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.list li {
+  font-weight: bold;
+}
