@@ -54,9 +54,6 @@ streaming token-by-token. Leave it idle and someone breaks the silence.
 ---
 
 ## How to give feedback
-
-This project is built by an AI loop; you mainly **test and report**:
-
 - Describe what happened in plain language.
 - Paste any errors verbatim (the single most useful thing) — including anything in
   the browser devtools console.
