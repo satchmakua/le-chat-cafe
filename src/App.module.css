@@ -43,7 +43,25 @@
 }
 
 .topic {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   color: var(--dim);
+}
+
+.status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: help;
+}
+
+.status[data-kind='ollama'] {
+  color: var(--accent);
+}
+
+.status[data-kind='mock'] {
+  color: #d98c4a;
 }

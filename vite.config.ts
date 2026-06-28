@@ -7,6 +7,12 @@ import react from '@vitejs/plugin-react';
 // 'jsdom' when component-render tests arrive (see ROADMAP M5).
 export default defineConfig({
   plugins: [react()],
+  // Honor a port injected by the launcher (e.g. the preview harness via PORT),
+  // otherwise default to Vite's usual 5173.
+  server: {
+    port: Number(process.env.PORT) || 5173,
+    strictPort: false,
+  },
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
