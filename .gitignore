@@ -1,0 +1,30 @@
+# --- Base ignores (stack-agnostic) ---
+
+# Secrets / local env — never commit real ones
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor / OS cruft
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# Generic build / cache output
+dist/
+build/
+out/
+coverage/
+.cache/
+tmp/
+*.tmp
+
+# --- Stack-specific (Vite + React + TS) ---
+node_modules/
+.vite/
+vite.config.ts.timestamp-*

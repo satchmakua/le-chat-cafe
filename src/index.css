@@ -1,0 +1,30 @@
+/* Theme variables. The CRT/terminal palette is the default; the AIM palette and
+   a runtime toggle arrive in ROADMAP M5 — themes are pure variable swaps. */
+:root {
+  --bg: #0b0f0a;
+  --panel: #0f1410;
+  --fg: #cfe8c9;
+  --dim: #6f8a6a;
+  --accent: #4fae4f;
+  --user-color: #ffd479;
+  --border: #1c281b;
+  --font-mono: 'Cascadia Code', 'Consolas', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
