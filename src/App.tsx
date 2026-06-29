@@ -6,14 +6,25 @@ import { Playground } from './ui/Playground';
 import { useRoom } from './state/store';
 import styles from './App.module.css';
 
+type Theme = 'crt' | 'aim';
+
 export function App() {
   const init = useRoom((s) => s.init);
   const providerKind = useRoom((s) => s.providerKind);
+  const topic = useRoom((s) => s.topic);
   const [showPlayground, setShowPlayground] = useState(false);
+  const [theme, setTheme] = useState<Theme>(
+    () => (localStorage.getItem('theme') as Theme | null) ?? 'crt',
+  );
 
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   return (
     <div className={styles.app}>
@@ -26,8 +37,15 @@ export function App() {
 
       <main className={styles.main}>
         <header className={styles.topic}>
-          <span># cafe — late-night chat</span>
+          <span># cafe{topic ? ` — ${topic}` : ' — late-night chat'}</span>
           <span className={styles.headRight}>
+            <button
+              className={styles.gear}
+              onClick={() => setTheme((t) => (t === 'crt' ? 'aim' : 'crt'))}
+              title="toggle CRT / AIM theme"
+            >
+              {theme === 'crt' ? '◓ aim' : '◑ crt'}
+            </button>
             <button
               className={styles.gear}
               onClick={() => setShowPlayground((v) => !v)}
