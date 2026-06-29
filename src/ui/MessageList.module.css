@@ -10,6 +10,25 @@
   word-break: break-word;
 }
 
+.fork {
+  visibility: hidden;
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.line:hover .fork {
+  visibility: visible;
+}
+
+.fork:hover {
+  color: var(--accent);
+}
+
 .ts {
   color: var(--dim);
 }

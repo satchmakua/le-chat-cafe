@@ -6,6 +6,7 @@ import styles from './MessageList.module.css';
 export function MessageList() {
   const messages = useRoom((s) => s.messages);
   const personas = useRoom((s) => s.personas);
+  const forkAt = useRoom((s) => s.forkAt);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,6 +33,16 @@ export function MessageList() {
             {m.text}
             {m.pending && <span className={styles.cursor}>▋</span>}
           </span>
+          {!m.pending && (
+            <button
+              className={styles.fork}
+              onClick={() => forkAt(m.id)}
+              title="rewind the conversation to here (discard everything after)"
+              aria-label="rewind to here"
+            >
+              ⑂
+            </button>
+          )}
         </div>
       ))}
       <div ref={endRef} />
