@@ -12,12 +12,14 @@ export interface Participant {
 
 export type ClientMsg =
   | { t: 'hello'; room: string; name: string; canHost: boolean }
-  | { t: 'say'; message: Message }; // a human turn (or, from the host, a persona turn)
+  | { t: 'say'; message: Message } // a human turn (or, from the host, a final persona turn)
+  | { t: 'stream'; message: Message }; // host → live token updates for a persona turn (ephemeral)
 
 export type ServerMsg =
   | { t: 'welcome'; you: string; hostId: string; participants: Participant[]; log: Message[] }
   | { t: 'presence'; participants: Participant[] }
-  | { t: 'message'; seq: number; message: Message };
+  | { t: 'message'; seq: number; message: Message } // canonical, ordered, stored in the log
+  | { t: 'stream'; message: Message }; // live token update, not stored (M6.2)
 
 /** Default relay port (overridable via PORT). */
 export const DEFAULT_RELAY_PORT = 8787;

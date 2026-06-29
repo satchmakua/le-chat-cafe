@@ -5,8 +5,10 @@ this is the working memory between build sessions. The forward-looking plan and
 acceptance tests live in [ROADMAP.md](ROADMAP.md); this is the backward-looking "what
 got done and why" companion.
 
-**Current phase:** v1 complete (M0–M5); **M6.0 (multiplayer relay skeleton) built**,
-awaiting the human's two-tab test. Next: **M6.1 — host-authoritative personas**.
+**Current phase:** **Entire roadmap built (M0–M5 + M6.0–M6.2).** Multiplayer is
+complete: relay, host-authoritative personas, wire streaming, reconnection, host
+hand-off. Awaiting the human's two-tab confirmation of the M6 slices; otherwise the loop
+is in maintenance (fix what tests surface; no scheduled work remains).
 
 ### State of the tree
 
@@ -21,15 +23,67 @@ awaiting the human's two-tab test. Next: **M6.1 — host-authoritative personas*
 | Affinity | `src/runtime/affinity.ts` | ✅ §aff sentinel strip, clamp/apply/decay, phrasing |
 | Playground | `src/runtime/playground.ts` | ✅ persona merge, fork, regen target, A/B prompt (pure) |
 | Eval | `src/eval/metrics.ts`, `eval/run.ts` | ✅ distinctness metrics + `npm run eval` harness |
-| Net / transport | `src/net/protocol.ts`, `src/net/transport.ts` | ✅ wire types + `LocalTransport`/`WSTransport` |
-| Relay | `server/relay.ts` | ✅ thin `ws` relay (`npm run relay`); 2-client integration test |
+| Net / transport | `src/net/protocol.ts`, `src/net/transport.ts` | ✅ wire types + `WSTransport` (streaming, auto-reconnect) |
+| Relay | `server/relay.ts` | ✅ thin `ws` relay (`npm run relay`); stream passthrough + host hand-off |
 | Persistence | `src/persist/db.ts` | ✅ IndexedDB v2 (messages, memory, relationships, kv) via `idb` |
 | Personas | `src/personas/*.json` | ✅ 4 personas, glob-loaded (data-driven) |
-| Room state | `src/state/store.ts` | ✅ ticks, streaming, persist, affinity, playground, /commands, connect |
-| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, themes, hearts, typing, Playground (+ multiplayer), system lines |
-| Tests | `tests/*.test.{ts,tsx}` | ✅ 57 passing (+ relay integration, protocol) |
+| Room state | `src/state/store.ts` | ✅ ticks, streaming, persist, affinity, playground, /commands, host-driven net |
+| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, themes, hearts, typing, Playground (+ multiplayer/host status), system lines |
+| Tests | `tests/*.test.{ts,tsx}` | ✅ 59 passing (relay: broadcast, host, stream, hand-off) |
 
 ---
+
+## M6.2 — Streaming over the wire + resilience · built 2026-06-28 (awaiting test)
+
+**What shipped:** the last roadmap slice — multiplayer feels live and survives a blip.
+- **Token-delta streaming.** The host broadcasts throttled `stream` frames (≤1/100ms)
+  as a persona turn generates, so viewers watch it type; the final `say` carries the
+  canonical, ordered, stored message. A new `stream` wire type is rebroadcast by the
+  relay but never stored (only the final lands in the room log). Viewers upsert by id;
+  the `message` handler now upserts too (finalizing a streamed line).
+- **Reconnection resync.** `WSTransport` auto-reconnects on an unexpected close (linear
+  backoff, ≤5 tries); each fresh `welcome` re-snapshots the room, so a dropped client
+  recovers transparently.
+- **Host hand-off.** The relay already promotes a remaining member when the host leaves;
+  the client reacts to the presence change (`becameHost` → "you are now the host" +
+  starts driving the idle loop).
+
+**Verified:** `npm run typecheck` clean; **59/59 tests** (+2 relay: stream passthrough is
+rebroadcast-not-stored; host hand-off promotes a remaining member); `npm run build`
+clean. End-to-end in the browser (Mock host): a terminal viewer logged live `STREAM`
+frames with growing text (`caius "ha," → "ha, fair enough."`; `juno "anyone" → "anyone
+else need more coffee?"`) followed by the `FINAL` messages — i.e. persona turns stream
+over the wire. Then I **killed and restarted the relay** while the host tab stayed open:
+it auto-reconnected and a fresh probe saw `guest(host)` back in the room. No console
+errors.
+
+## M6.1 — Host-authoritative personas · built 2026-06-28 (awaiting test)
+
+**What shipped:** in a networked room, exactly one client (the **host**) drives the
+personas; everyone else just renders. The host runs the Conductor + Persona Runtime
+against its local Ollama and, when each persona turn finalizes, broadcasts the final
+message through the relay (joiners append it; the host dedups its own echo by id). The
+`tick` gate became host-aware (`networked && !isHost → return`); the host re-ticks on
+every ingested message so personas react to remote humans, and runs the idle timer so the
+room stays alive. Every client offers to host (`canHost: true`); the relay makes the
+first one host (have Ollama there for real personas). Also: the **sticky id→name cache**
+(`participantNames`) so a departed participant's old lines keep their nick instead of a
+raw `human:N`; `/who` lists remote humans + personas; `/msg` routes through the relay
+when networked; timeline edits (regenerate/fork) are no-ops while networked (the relay
+owns order). The Playground shows "host (you drive the personas)" vs "viewer".
+
+**Verified:** `npm run typecheck` clean; **57/57 tests**; `npm run build` clean.
+End-to-end in the browser (Mock host): connected the preview tab → it became **host**;
+a terminal viewer joined; sent a question from the host → the host's Conductor generated
+persona turns (Juno, Caius) and **broadcast them** — confirmed by dumping the relay's
+room-log snapshot from a fresh joiner (`juno`/`caius` lines present alongside the humans).
+Bob's line still rendered as "Bob" after Bob disconnected (sticky-name cache fixes the
+M6.0 limitation). No console errors.
+
+**Note:** persona turns currently broadcast as *final* messages (joiners see them pop in,
+not stream) — cross-network token streaming is M6.2. Mock streaming is throttled in a
+background browser tab, so host-side generation takes a few seconds in headless tests
+(not a product issue).
 
 ## M6.0 — Multiplayer relay skeleton · built 2026-06-28 (awaiting test)
 

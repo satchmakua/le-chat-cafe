@@ -9,6 +9,7 @@ export function MessageList() {
   const forkAt = useRoom((s) => s.forkAt);
   const myId = useRoom((s) => s.myId);
   const remoteParticipants = useRoom((s) => s.remoteParticipants);
+  const participantNames = useRoom((s) => s.participantNames);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,7 +32,9 @@ export function MessageList() {
         const name = isMe
           ? 'you'
           : isHuman
-            ? (remoteParticipants.find((p) => p.id === m.author)?.name ?? m.author)
+            ? (remoteParticipants.find((p) => p.id === m.author)?.name ??
+              participantNames[m.author] ??
+              m.author)
             : (persona?.name ?? m.author);
         const color = isHuman ? 'var(--user-color)' : (persona?.color ?? 'var(--fg)');
         return (

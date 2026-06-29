@@ -91,10 +91,14 @@ interface RoomState {
   topic: string;
   /** Multiplayer (DESIGN §11): true while connected to a relay. */
   networked: boolean;
+  /** True when this client drives the personas (single-player, or the relay host). */
+  isHost: boolean;
   /** This client's participant id when networked ('' otherwise). */
   myId: string;
   /** Participants reported by the relay (humans), when networked. */
   remoteParticipants: Participant[];
+  /** Sticky id→name cache so a departed participant's old lines still show a nick. */
+  participantNames: Record<string, string>;
 
   init: () => Promise<void>;
   connect: (url: string, room: string, name: string) => Promise<void>;
@@ -139,8 +143,10 @@ export const useRoom = create<RoomState>((set, get) => ({
   muted: [],
   topic: '',
   networked: false,
+  isHost: true, // single-player drives its own personas
   myId: '',
   remoteParticipants: [],
+  participantNames: {},
 
   async init() {
     if (initialized) return; // guard against React StrictMode double-invoke
@@ -239,28 +245,69 @@ export const useRoom = create<RoomState>((set, get) => ({
     if (get().networked) return;
     clearIdle();
     const t = new WSTransport();
+
+    // Merge a participant list into the sticky id→name cache.
+    const cacheNames = (participants: Participant[]) => {
+      const names = { ...get().participantNames };
+      for (const p of participants) names[p.id] = p.name;
+      return names;
+    };
+
     t.onMessage((m: ServerMsg) => {
       if (m.t === 'welcome') {
-        set({ networked: true, myId: m.you, remoteParticipants: m.participants, messages: m.log });
+        const isHost = m.you === m.hostId;
+        set({
+          networked: true,
+          isHost,
+          myId: m.you,
+          remoteParticipants: m.participants,
+          participantNames: cacheNames(m.participants),
+          messages: m.log,
+        });
+        if (isHost) scheduleIdle(); // the host drives the room
       } else if (m.t === 'presence') {
-        set({ remoteParticipants: m.participants });
+        const me = m.participants.find((p) => p.id === get().myId);
+        const becameHost = !!me?.isHost && !get().isHost;
+        set({
+          remoteParticipants: m.participants,
+          participantNames: cacheNames(m.participants),
+          isHost: me?.isHost ?? get().isHost,
+        });
+        if (becameHost) {
+          // Host hand-off: the relay promoted us when the previous host left.
+          get().postSystem('* you are now the host — driving the personas *');
+          scheduleIdle();
+        }
       } else if (m.t === 'message') {
-        set((s) =>
-          s.messages.some((x) => x.id === m.message.id)
-            ? {}
-            : { messages: [...s.messages, m.message] },
-        );
+        // Canonical, ordered message: upsert (finalizes a streamed turn for viewers).
+        const exists = get().messages.some((x) => x.id === m.message.id);
+        set((s) => ({
+          messages: exists
+            ? s.messages.map((x) => (x.id === m.message.id ? m.message : x))
+            : [...s.messages, m.message],
+        }));
+        if (!exists && get().isHost) get().tick('message'); // host reacts to genuinely new lines
+      } else if (m.t === 'stream') {
+        // Live token update for a persona turn — viewers only (the host streams locally).
+        if (get().isHost) return;
+        set((s) => ({
+          messages: s.messages.some((x) => x.id === m.message.id)
+            ? s.messages.map((x) => (x.id === m.message.id ? { ...x, text: m.message.text, pending: m.message.pending } : x))
+            : [...s.messages, m.message],
+        }));
       }
     });
-    // canHost: only a client with Ollama can drive personas (used from M6.1).
-    await t.connect({ url, room, name, canHost: get().providerKind === 'ollama' });
+
+    // Every client offers to host; the relay makes the first one the host. (For
+    // real personas that client should have Ollama; with Mock it drives stubs.)
+    await t.connect({ url, room, name, canHost: true });
     transport = t;
   },
 
   disconnect() {
     transport?.close();
     transport = null;
-    set({ networked: false, myId: '', remoteParticipants: [] });
+    set({ networked: false, isHost: true, myId: '', remoteParticipants: [], participantNames: {} });
     scheduleIdle();
   },
 
@@ -300,8 +347,8 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
 
   tick(trigger) {
-    // Networked mode runs no local personas yet — the host drives them in M6.1.
-    if (get().networked) return;
+    // In a networked room only the host drives personas; joiners just render.
+    if (get().networked && !get().isHost) return;
     const { personas, messages, generating, config, muted } = get();
     const chosen = selectSpeakers({
       personas: personas.filter((p) => !muted.includes(p.id)),
@@ -353,6 +400,7 @@ export const useRoom = create<RoomState>((set, get) => ({
     // Accumulate the raw stream (which may carry the §aff sentinel at the end) but
     // only ever display the text before the sentinel — so it never flashes (§6.6).
     let raw = '';
+    let lastStreamed = 0;
     try {
       for await (const chunk of provider.chat(req)) {
         if (!chunk.token) continue;
@@ -361,6 +409,18 @@ export const useRoom = create<RoomState>((set, get) => ({
         set((s) => ({
           messages: s.messages.map((m) => (m.id === replyId ? { ...m, text: shown } : m)),
         }));
+        // Host: stream live token updates to viewers, throttled (the final `say`
+        // below carries the canonical message). M6.2.
+        if (get().networked && transport) {
+          const now = Date.now();
+          if (now - lastStreamed > 100) {
+            lastStreamed = now;
+            transport.send({
+              t: 'stream',
+              message: { id: replyId, channelId: CHANNEL_ID, author: persona.id, text: shown, ts: pending.ts, pending: true },
+            });
+          }
+        }
       }
     } catch (err) {
       const note = err instanceof Error ? err.message : String(err);
@@ -373,7 +433,16 @@ export const useRoom = create<RoomState>((set, get) => ({
       }));
       get().applyAffinityDeltas(persona.id, deltas);
       const finalized = get().messages.find((m) => m.id === replyId);
-      if (finalized) void db.saveMessage(finalized).catch(() => {});
+      if (finalized) {
+        if (get().networked) {
+          // Host: publish the persona turn to the room (joiners render it). The
+          // relay echoes it back, where ingest dedups by id. (Streaming over the
+          // wire is M6.2; for now joiners get the final message.)
+          transport?.send({ t: 'say', message: finalized });
+        } else {
+          void db.saveMessage(finalized).catch(() => {});
+        }
+      }
       void get().maybeSummarize();
       get().tick('message'); // a new line landed — let others react / fill freed slots
     }
@@ -455,6 +524,7 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   regenerateLast() {
     const { messages, personas, generating } = get();
+    if (get().networked) return; // timeline edits are local-only (relay owns order)
     if (generating.length > 0) return;
     const target = lastPersonaMessage(messages);
     if (!target) return;
@@ -466,6 +536,7 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
 
   forkAt(id) {
+    if (get().networked) return; // timeline edits are local-only (relay owns order)
     const { kept, removed } = truncateAfter(get().messages, id);
     if (removed.length === 0) return;
     set({ messages: kept });
@@ -540,10 +611,13 @@ export const useRoom = create<RoomState>((set, get) => ({
 
     switch (cmd) {
       case 'who': {
-        const list = personas
-          .map((p) => (muted.includes(p.id) ? `${p.name} (muted)` : p.name))
-          .join(', ');
-        get().postSystem(`* in the room: you, ${list} *`);
+        const personaList = personas.map((p) => (muted.includes(p.id) ? `${p.name} (muted)` : p.name));
+        const humans = get().networked
+          ? get().remoteParticipants
+              .filter((p) => p.kind === 'human')
+              .map((p) => (p.id === get().myId ? `${p.name} (you)` : p.name))
+          : ['you'];
+        get().postSystem(`* in the room: ${[...humans, ...personaList].join(', ')} *`);
         break;
       }
       case 'help':
@@ -559,14 +633,18 @@ export const useRoom = create<RoomState>((set, get) => ({
           break;
         }
         if (!body) break;
+        const text = `${target.name}: ${body}`;
+        // Networked: send as a normal human turn; the host's Conductor sees the
+        // mention and answers. Single-player: append + drive the persona directly.
+        if (get().networked && transport) {
+          transport.send({
+            t: 'say',
+            message: { id: uid(), channelId: CHANNEL_ID, author: get().myId || 'user', text, ts: Date.now() },
+          });
+          break;
+        }
         clearIdle();
-        const msg: Message = {
-          id: uid(),
-          channelId: CHANNEL_ID,
-          author: 'user',
-          text: `${target.name}: ${body}`,
-          ts: Date.now(),
-        };
+        const msg: Message = { id: uid(), channelId: CHANNEL_ID, author: 'user', text, ts: Date.now() };
         set((s) => ({ messages: [...s.messages, msg] }));
         void db.saveMessage(msg).catch(() => {});
         if (!get().muted.includes(target.id)) void get().startGeneration(target);
