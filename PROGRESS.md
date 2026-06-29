@@ -5,8 +5,8 @@ this is the working memory between build sessions. The forward-looking plan and
 acceptance tests live in [ROADMAP.md](ROADMAP.md); this is the backward-looking "what
 got done and why" companion.
 
-**Current phase:** v1 feature-complete (M0–M5 built, awaiting the human's in-browser
-test pass). See [ROADMAP.md](ROADMAP.md) for the post-v1 extension (real multiplayer).
+**Current phase:** v1 complete (M0–M5); **M6.0 (multiplayer relay skeleton) built**,
+awaiting the human's two-tab test. Next: **M6.1 — host-authoritative personas**.
 
 ### State of the tree
 
@@ -21,13 +21,46 @@ test pass). See [ROADMAP.md](ROADMAP.md) for the post-v1 extension (real multipl
 | Affinity | `src/runtime/affinity.ts` | ✅ §aff sentinel strip, clamp/apply/decay, phrasing |
 | Playground | `src/runtime/playground.ts` | ✅ persona merge, fork, regen target, A/B prompt (pure) |
 | Eval | `src/eval/metrics.ts`, `eval/run.ts` | ✅ distinctness metrics + `npm run eval` harness |
+| Net / transport | `src/net/protocol.ts`, `src/net/transport.ts` | ✅ wire types + `LocalTransport`/`WSTransport` |
+| Relay | `server/relay.ts` | ✅ thin `ws` relay (`npm run relay`); 2-client integration test |
 | Persistence | `src/persist/db.ts` | ✅ IndexedDB v2 (messages, memory, relationships, kv) via `idb` |
 | Personas | `src/personas/*.json` | ✅ 4 personas, glob-loaded (data-driven) |
-| Room state | `src/state/store.ts` | ✅ ticks, streaming, persist, affinity, playground, /commands, mute |
-| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, CRT/AIM themes, hearts, typing, Playground, system lines |
-| Tests | `tests/*.test.{ts,tsx}` | ✅ 53 passing (+ jsdom component tests, eval metrics) |
+| Room state | `src/state/store.ts` | ✅ ticks, streaming, persist, affinity, playground, /commands, connect |
+| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, themes, hearts, typing, Playground (+ multiplayer), system lines |
+| Tests | `tests/*.test.{ts,tsx}` | ✅ 57 passing (+ relay integration, protocol) |
 
 ---
+
+## M6.0 — Multiplayer relay skeleton · built 2026-06-28 (awaiting test)
+
+**What shipped (post-v1, greenlit):** a second human can join the room. A thin Node +
+`ws` relay (`server/relay.ts`, `npm run relay`) routes messages and tracks presence per
+room — it never touches Ollama, so local-first holds. A `Transport` port
+(`src/net/transport.ts`) mirrors `LLMProvider`: `LocalTransport` (single-player no-op)
+and `WSTransport` (browser-native WebSocket). The store gained opt-in `connect`/
+`disconnect`; while networked it sends human turns through the relay (which is the single
+source of order — it stamps a `seq` and broadcasts to all, who append on receipt) and
+gates local persona ticks. A Multiplayer section in the Playground drives connect; remote
+humans show in the nick list and message log. **Single-player is byte-identical when not
+connected.**
+
+**Key decisions:** thin relay (no LLM on the server); host-authoritative personas
+deferred to M6.1 (the `canHost` flag is already sent, set from whether this client has
+Ollama); relay-as-source-of-order (no optimistic local append → no dupes); joiners get a
+snapshot, only single-player persists to IndexedDB (networked messages are session-only).
+
+**Verified:** `npm run typecheck` clean (no DOM/@types/node conflict); **57/57 tests**
+(+2 relay two-client integration: message broadcast + host assignment; +2 protocol);
+`npm run build` clean. End-to-end in the browser: started `npm run relay`, connected the
+preview tab (Playground → connect) → "connected as guest"; a second client launched from
+the terminal joined the same room → it appeared in the browser's nick list (live
+presence) and its message rendered in the log with the correct nick; disconnect returned
+the tab cleanly to single-player (personas resume); no console errors.
+
+**Known limitation (→ M6.1):** a message from a participant who has since *left* renders
+its raw id (e.g. `human:2`) because name resolution uses live presence; names render
+correctly while connected. A sticky id→name cache will fix this alongside the
+host-authoritative persona work.
 
 ## M5 — Polish + evals · built 2026-06-28 (awaiting test)
 

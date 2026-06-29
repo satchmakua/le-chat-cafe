@@ -71,8 +71,34 @@ See [DESIGN.md](DESIGN.md) for the full rationale; section refs below point into
   **Test:** toggle themes → the whole room restyles instantly; `/commands` work; the
   eval script reports per-persona distinctness numbers.
 
+## Phase 3 — Multiplayer (post-v1, greenlit 2026-06-28)
+
+Crosses the v1 "no backend" line on purpose; single-player stays the default. Full
+spec in [DESIGN.md §11](DESIGN.md).
+
+- [ ] **M6.0 — Relay skeleton.** Thin Node + `ws` relay + a `Transport` port
+  (`LocalTransport` no-op / `WSTransport`). Two clients join a room and exchange
+  *human* messages with live presence (join/leave); networked mode gates local persona
+  ticks. Single-player path unchanged. _(DESIGN §11)_
+  **Test:** run `npm run relay`; open two browser tabs, connect both to the same room →
+  a message typed in one appears in the other, and each tab's nick list shows the other
+  human. With no relay, the app behaves exactly as before. (`npm test` covers the relay
+  with a two-client integration test.)
+
+- [ ] **M6.1 — Host-authoritative personas.** The host client runs the Conductor and
+  broadcasts persona turns; joiners see the room banter. `/who` lists remote humans +
+  personas. _(DESIGN §11)_
+  **Test:** two tabs connected, only the host has Ollama → personas reply and both tabs
+  see the same turns in the same order; no duplicate persona lines.
+
+- [ ] **M6.2 — Streaming & resilience.** Token-delta streaming over WS, reconnection
+  with snapshot resync, nick-collision handling, host hand-off when the host leaves.
+  _(DESIGN §11)_
+  **Test:** persona replies stream live in the joiner's tab; kill/restart a tab → it
+  resyncs; close the host tab → another client picks up hosting.
+
 <!-- Post-v1 (documented, not scheduled): real multiplayer via a thin Node + WebSocket
-     relay — a second human is just another participant id (DESIGN §8). -->
+     relay — a second human is just another participant id (DESIGN §11). -->
 
 ---
 

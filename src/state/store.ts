@@ -22,6 +22,9 @@ import {
   visibleText,
 } from '../runtime/affinity';
 import { buildABPrompt, lastPersonaMessage, mergePersona, truncateAfter } from '../runtime/playground';
+import type { Participant, ServerMsg } from '../net/protocol';
+import type { Transport } from '../net/transport';
+import { WSTransport } from '../net/transport';
 import { personas as basePersonas } from '../personas';
 import * as db from '../persist/db';
 
@@ -86,8 +89,16 @@ interface RoomState {
   muted: string[];
   /** Channel topic shown in the header (/topic). */
   topic: string;
+  /** Multiplayer (DESIGN §11): true while connected to a relay. */
+  networked: boolean;
+  /** This client's participant id when networked ('' otherwise). */
+  myId: string;
+  /** Participants reported by the relay (humans), when networked. */
+  remoteParticipants: Participant[];
 
   init: () => Promise<void>;
+  connect: (url: string, room: string, name: string) => Promise<void>;
+  disconnect: () => void;
   sendUserMessage: (text: string) => void;
   /** Append a `* … *` system notice (joins/leaves/topic/command output). */
   postSystem: (text: string) => void;
@@ -107,10 +118,11 @@ interface RoomState {
   runAB: (prompt: string, aId: string, bId: string) => Promise<void>;
 }
 
-// Module-scope I/O state (timers/flags), not domain state.
+// Module-scope I/O state (timers/flags/sockets), not domain state.
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let initialized = false;
 let summarizing = false;
+let transport: Transport | null = null;
 
 export const useRoom = create<RoomState>((set, get) => ({
   personas: basePersonas,
@@ -126,6 +138,9 @@ export const useRoom = create<RoomState>((set, get) => ({
   ab: { a: null, b: null, running: false },
   muted: [],
   topic: '',
+  networked: false,
+  myId: '',
+  remoteParticipants: [],
 
   async init() {
     if (initialized) return; // guard against React StrictMode double-invoke
@@ -220,11 +235,55 @@ export const useRoom = create<RoomState>((set, get) => ({
     scheduleIdle(); // let the room come alive on its own
   },
 
+  async connect(url, room, name) {
+    if (get().networked) return;
+    clearIdle();
+    const t = new WSTransport();
+    t.onMessage((m: ServerMsg) => {
+      if (m.t === 'welcome') {
+        set({ networked: true, myId: m.you, remoteParticipants: m.participants, messages: m.log });
+      } else if (m.t === 'presence') {
+        set({ remoteParticipants: m.participants });
+      } else if (m.t === 'message') {
+        set((s) =>
+          s.messages.some((x) => x.id === m.message.id)
+            ? {}
+            : { messages: [...s.messages, m.message] },
+        );
+      }
+    });
+    // canHost: only a client with Ollama can drive personas (used from M6.1).
+    await t.connect({ url, room, name, canHost: get().providerKind === 'ollama' });
+    transport = t;
+  },
+
+  disconnect() {
+    transport?.close();
+    transport = null;
+    set({ networked: false, myId: '', remoteParticipants: [] });
+    scheduleIdle();
+  },
+
   sendUserMessage(text) {
     const trimmed = text.trim();
     if (!trimmed) return;
     if (trimmed.startsWith('/')) {
       get().runCommand(trimmed);
+      return;
+    }
+    // Networked: send through the relay; it broadcasts back and we append on
+    // receipt (the relay is the single source of order). No local append/persist.
+    if (get().networked && transport) {
+      transport.send({
+        t: 'say',
+        message: {
+          id: uid(),
+          channelId: CHANNEL_ID,
+          author: get().myId || 'user',
+          text: trimmed,
+          ts: Date.now(),
+        },
+      });
       return;
     }
     clearIdle();
@@ -241,6 +300,8 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
 
   tick(trigger) {
+    // Networked mode runs no local personas yet — the host drives them in M6.1.
+    if (get().networked) return;
     const { personas, messages, generating, config, muted } = get();
     const chosen = selectSpeakers({
       personas: personas.filter((p) => !muted.includes(p.id)),

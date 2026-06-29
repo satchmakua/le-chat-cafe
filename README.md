@@ -10,9 +10,10 @@ you, they talk to *each other*, and (later milestones) they remember how they fe
 about you across sessions. Lurk, jump in, or open the playground and tune the room
 like an instrument.
 
-**Status:** _v1 feature-complete (M0–M5)_ — a persistent multi-persona room with the
-Conductor, a friendship sim, a power-user playground, CRT/AIM themes, `/commands`, and a
-persona-distinctness eval. See [ROADMAP.md](ROADMAP.md) for the plan and
+**Status:** _v1 complete (M0–M5) + multiplayer skeleton (M6.0)_ — a persistent
+multi-persona room with the Conductor, a friendship sim, a power-user playground, CRT/AIM
+themes, `/commands`, a persona-distinctness eval, and an opt-in WebSocket relay so a
+second human can join. See [ROADMAP.md](ROADMAP.md) for the plan and
 [PROGRESS.md](PROGRESS.md) for what shipped.
 
 ---
@@ -57,6 +58,14 @@ Type `/help` for chat commands (`/who`, `/msg`, `/kick`, `/invite`, `/topic`, `/
 | `npm run typecheck` | Type-check with `tsc` (no emit) |
 | `npm run build` | Production build (typecheck + Vite build) |
 | `npm run eval` | Persona-distinctness report (add `:ollama` for real models) |
+| `npm run relay` | Start the multiplayer relay (`ws://localhost:8787`) |
+
+### Multiplayer (optional)
+
+Run `npm run relay`, then in the app open the ⚙ playground → **Multiplayer** → connect
+two browser tabs to the same room. Humans appear in each other's nick list and chat in
+real time. It's fully opt-in — without the relay the app is single-player as above.
+(Personas are currently driven per-tab; host-authoritative personas land in M6.1.)
 
 ---
 

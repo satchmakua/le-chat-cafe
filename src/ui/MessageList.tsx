@@ -7,6 +7,8 @@ export function MessageList() {
   const messages = useRoom((s) => s.messages);
   const personas = useRoom((s) => s.personas);
   const forkAt = useRoom((s) => s.forkAt);
+  const myId = useRoom((s) => s.myId);
+  const remoteParticipants = useRoom((s) => s.remoteParticipants);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,9 +25,15 @@ export function MessageList() {
             </div>
           );
         }
-        const persona = m.author === 'user' ? undefined : personas.find((p) => p.id === m.author);
-        const name = m.author === 'user' ? 'you' : (persona?.name ?? m.author);
-        const color = m.author === 'user' ? 'var(--user-color)' : (persona?.color ?? 'var(--fg)');
+        const isMe = m.author === 'user' || (myId !== '' && m.author === myId);
+        const isHuman = isMe || m.author.startsWith('human:');
+        const persona = isHuman ? undefined : personas.find((p) => p.id === m.author);
+        const name = isMe
+          ? 'you'
+          : isHuman
+            ? (remoteParticipants.find((p) => p.id === m.author)?.name ?? m.author)
+            : (persona?.name ?? m.author);
+        const color = isHuman ? 'var(--user-color)' : (persona?.color ?? 'var(--fg)');
         return (
           <div key={m.id} className={styles.line}>
             <span className={styles.ts}>{formatTimestamp(m.ts)}</span>{' '}
