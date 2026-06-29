@@ -31,14 +31,28 @@ export class LocalTransport implements Transport {
   close(): void {}
 }
 
+const MAX_RECONNECTS = 5;
+
 export class WSTransport implements Transport {
   private ws: WebSocket | null = null;
   private cb: ((m: ServerMsg) => void) | null = null;
+  private opts: ConnectOpts | null = null;
   private you = '';
   private hostId = '';
+  private userClosed = false;
+  private attempts = 0;
 
   connect(opts: ConnectOpts): Promise<void> {
+    this.opts = opts;
+    this.userClosed = false;
+    return this.open(true);
+  }
+
+  /** Open a socket + wire listeners. `initial` rejects on failure; reconnects don't. */
+  private open(initial: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
+      const opts = this.opts;
+      if (!opts) return reject(new Error('not configured'));
       const ws = new WebSocket(opts.url);
       this.ws = ws;
 
@@ -56,7 +70,8 @@ export class WSTransport implements Transport {
         if (msg.t === 'welcome') {
           this.you = msg.you;
           this.hostId = msg.hostId;
-          resolve(); // connection is ready once the relay welcomes us
+          this.attempts = 0; // a clean welcome resets the backoff
+          resolve(); // ready once the relay welcomes us (also fires after a reconnect resync)
         } else if (msg.t === 'presence') {
           const me = msg.participants.find((p) => p.id === this.you);
           if (me?.isHost) this.hostId = this.you;
@@ -64,11 +79,26 @@ export class WSTransport implements Transport {
         this.cb?.(msg);
       });
 
-      ws.addEventListener('error', () => reject(new Error('relay connection failed')));
+      ws.addEventListener('error', () => {
+        if (initial) reject(new Error('relay connection failed'));
+      });
+
       ws.addEventListener('close', () => {
         if (this.ws === ws) this.ws = null;
+        if (!this.userClosed) this.scheduleReconnect();
       });
     });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.userClosed || this.attempts >= MAX_RECONNECTS) return;
+    this.attempts += 1;
+    setTimeout(
+      () => {
+        if (!this.userClosed) void this.open(false).catch(() => {});
+      },
+      400 * this.attempts, // linear backoff
+    );
   }
 
   send(msg: ClientMsg): void {
@@ -84,6 +114,7 @@ export class WSTransport implements Transport {
   }
 
   close(): void {
+    this.userClosed = true;
     this.ws?.close();
     this.ws = null;
   }

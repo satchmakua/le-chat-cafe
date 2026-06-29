@@ -80,4 +80,61 @@ describe('relay (two-client integration)', () => {
     a.close();
     b.close();
   });
+
+  it('rebroadcasts live stream frames without storing them in the log', async () => {
+    relay = await createRelay({ port: 0 });
+    const url = `ws://localhost:${relay.port}`;
+    const a = await open(url);
+    const b = await open(url);
+    const aw = next(a, isWelcome);
+    sendC(a, { t: 'hello', room: 'cafe', name: 'Ann', canHost: true });
+    await aw;
+    sendC(b, { t: 'hello', room: 'cafe', name: 'Bob', canHost: false });
+    await next(b, isWelcome);
+
+    // A streams a partial persona turn; B should get a 'stream' (not 'message').
+    const bStream = next(b, (m) => m.t === 'stream');
+    sendC(a, { t: 'stream', message: { id: 'p1', channelId: 'cafe', author: 'caius', text: 'hel', ts: 1, pending: true } });
+    const streamed = (await bStream) as Extract<ServerMsg, { t: 'stream' }>;
+    expect(streamed.message.text).toBe('hel');
+
+    // A finalizes with 'say'; B gets the canonical ordered 'message'.
+    const bMsg = next(b, (m) => m.t === 'message');
+    sendC(a, { t: 'say', message: { id: 'p1', channelId: 'cafe', author: 'caius', text: 'hello', ts: 2 } });
+    await bMsg;
+
+    // A late joiner's snapshot has exactly the final (streams are never stored).
+    const c = await open(url);
+    const cw = next(c, isWelcome);
+    sendC(c, { t: 'hello', room: 'cafe', name: 'Cara', canHost: false });
+    const wc = (await cw) as Extract<ServerMsg, { t: 'welcome' }>;
+    expect(wc.log.filter((m) => m.id === 'p1')).toHaveLength(1);
+    expect(wc.log.find((m) => m.id === 'p1')?.text).toBe('hello');
+
+    a.close();
+    b.close();
+    c.close();
+  });
+
+  it('hands host off to a remaining member when the host leaves', async () => {
+    relay = await createRelay({ port: 0 });
+    const url = `ws://localhost:${relay.port}`;
+    const a = await open(url);
+    const aw = next(a, isWelcome);
+    sendC(a, { t: 'hello', room: 'cafe', name: 'Ann', canHost: true });
+    await aw;
+    const b = await open(url);
+    const bw = next(b, isWelcome);
+    sendC(b, { t: 'hello', room: 'cafe', name: 'Bob', canHost: true });
+    const wb = (await bw) as Extract<ServerMsg, { t: 'welcome' }>;
+    expect(wb.hostId).not.toBe(wb.you); // Ann is host, not Bob
+
+    // Ann (host) leaves → relay promotes Bob and tells him via presence.
+    const bBecomesHost = next(b, (m) => m.t === 'presence' && !!m.participants.find((p) => p.id === wb.you)?.isHost);
+    a.close();
+    const pres = (await bBecomesHost) as Extract<ServerMsg, { t: 'presence' }>;
+    expect(pres.participants.find((p) => p.isHost)?.name).toBe('Bob');
+
+    b.close();
+  });
 });

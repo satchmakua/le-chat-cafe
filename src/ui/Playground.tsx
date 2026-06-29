@@ -11,6 +11,7 @@ export function Playground({ onClose }: { onClose: () => void }) {
   const regenerateLast = useRoom((s) => s.regenerateLast);
   const runAB = useRoom((s) => s.runAB);
   const networked = useRoom((s) => s.networked);
+  const isHost = useRoom((s) => s.isHost);
   const connect = useRoom((s) => s.connect);
   const disconnect = useRoom((s) => s.disconnect);
 
@@ -150,7 +151,9 @@ export function Playground({ onClose }: { onClose: () => void }) {
         <h3 className={styles.h3}>Multiplayer</h3>
         {networked ? (
           <>
-            <p className={styles.hint}>Connected to room "{room}" as {nick}.</p>
+            <p className={styles.hint}>
+              Connected to "{room}" as {nick} — {isHost ? 'host (you drive the personas)' : 'viewer'}.
+            </p>
             <button className={styles.btn} onClick={disconnect}>
               disconnect
             </button>

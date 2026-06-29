@@ -87,6 +87,14 @@ export function createRelay(opts: { port?: number } = {}): Promise<Relay> {
         if (room.log.length > SNAPSHOT_LIMIT) room.log.splice(0, room.log.length - SNAPSHOT_LIMIT);
         const out: ServerMsg = { t: 'message', seq: room.seq, message: msg.message };
         for (const m of room.members.values()) send(m.socket, out);
+        return;
+      }
+
+      if (msg.t === 'stream' && joined) {
+        // Live token update — rebroadcast only, never stored (the final `say`
+        // carries the canonical, ordered message).
+        const out: ServerMsg = { t: 'stream', message: msg.message };
+        for (const m of joined.room.members.values()) send(m.socket, out);
       }
     });
 
