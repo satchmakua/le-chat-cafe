@@ -3,6 +3,10 @@
 The milestone checklist. Standing instruction: **"continue"** → build the next
 unchecked milestone.
 
+> **✅ v1 complete (M0–M5), 2026-06-28.** All milestones built, verified, and confirmed.
+> The only remaining item is the documented **post-v1** multiplayer relay (below) —
+> out of v1 scope; don't build it without a green light.
+
 **Rules of the road:**
 - Each milestone is an **independently runnable** slice — something the human can
   actually test, not an internal-only refactor.
@@ -29,7 +33,7 @@ See [DESIGN.md](DESIGN.md) for the full rationale; section refs below point into
 
 ## Phase 1 — A living room
 
-- [ ] **M1 — Multi-persona + Conductor.** Load 3–4 personas from `src/personas/*.json`.
+- [x] **M1 — Multi-persona + Conductor.** Load 3–4 personas from `src/personas/*.json`.
   Implement the §4 Conductor (mention / question / event / idle candidates, scoring,
   cooldowns, `MAX_CONCURRENT=2`, anti-monologue) and wire the `OllamaProvider` as the
   default with a Mock fallback. Personas reply to you *and each other* without
@@ -39,14 +43,14 @@ See [DESIGN.md](DESIGN.md) for the full rationale; section refs below point into
   leave the room idle → after ~12s exactly one persona breaks the silence; no persona
   monologues. Conductor scoring has unit tests with a pinned RNG (`npm test` green).
 
-- [ ] **M2 — Persistence + memory.** IndexedDB (`idb`) for the message log, personas,
+- [x] **M2 — Persistence + memory.** IndexedDB (`idb`) for the message log, personas,
   and channel; working-memory window (last N) + long-term-notes summarization.
   _(DESIGN §6.2, §6.3)_
   **Test:** chat for a while, reload the page → history and personas are still there;
   a long conversation still produces in-character replies (older context summarized,
   not dropped).
 
-- [ ] **M3 — Friendship sim.** Affinity via the `§aff {…}§` sentinel (stripped before
+- [x] **M3 — Friendship sim.** Affinity via the `§aff {…}§` sentinel (stripped before
   display, clamped ±0.15/turn, decay on load), `Relationship` state injected into
   prompts, persisted. _(DESIGN §6.6)_
   **Test:** be warm to a persona across a session, reload → it greets you more warmly
@@ -55,12 +59,12 @@ See [DESIGN.md](DESIGN.md) for the full rationale; section refs below point into
 
 ## Phase 2 — Instrument & polish
 
-- [ ] **M4 — Playground.** Live persona/prompt/model editing, per-persona + Conductor
+- [x] **M4 — Playground.** Live persona/prompt/model editing, per-persona + Conductor
   tuning, fork the timeline, regenerate the last line, A/B two personas. _(DESIGN §6.7)_
   **Test:** edit a persona's system prompt → its next turn reflects the change; swap
   its model → replies change character; fork and regenerate work.
 
-- [ ] **M5 — Polish + evals.** CRT↔AIM theme toggle (CSS-variable swap), full
+- [x] **M5 — Polish + evals.** CRT↔AIM theme toggle (CSS-variable swap), full
   `/commands` (`/who`, `/msg`, `/kick`, `/invite`, `/topic`, `/me`, `/regen`, `/fork`),
   typing indicators, nick coloring, and the §6.8 distinctness eval harness (add
   jsdom + Testing Library for component tests). _(DESIGN §6.8, §7)_

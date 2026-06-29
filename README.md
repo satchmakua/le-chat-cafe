@@ -10,9 +10,10 @@ you, they talk to *each other*, and (later milestones) they remember how they fe
 about you across sessions. Lurk, jump in, or open the playground and tune the room
 like an instrument.
 
-**Status:** _M4 — persistent multi-persona room with a friendship sim and a power-user
-playground (live persona/model/Conductor editing, regenerate, fork, A/B)_ — see
-[ROADMAP.md](ROADMAP.md) for the plan and [PROGRESS.md](PROGRESS.md) for what's shipped.
+**Status:** _v1 feature-complete (M0–M5)_ — a persistent multi-persona room with the
+Conductor, a friendship sim, a power-user playground, CRT/AIM themes, `/commands`, and a
+persona-distinctness eval. See [ROADMAP.md](ROADMAP.md) for the plan and
+[PROGRESS.md](PROGRESS.md) for what shipped.
 
 ---
 
@@ -43,6 +44,10 @@ npm run dev     # start it → open the printed URL (default http://localhost:51
 Type a message and the room responds — personas reply to you and to each other,
 streaming token-by-token. Leave it idle and someone breaks the silence.
 
+**In the room:** toggle the CRT ↔ AIM theme and open the ⚙ playground from the header.
+Type `/help` for chat commands (`/who`, `/msg`, `/kick`, `/invite`, `/topic`, `/me`,
+`/regen`, `/fork`). Hover a message and click ⑂ to rewind the timeline.
+
 ### Commands
 
 | Command | What it does |
@@ -51,6 +56,7 @@ streaming token-by-token. Leave it idle and someone breaks the silence.
 | `npm test` | Run the tests (Vitest) |
 | `npm run typecheck` | Type-check with `tsc` (no emit) |
 | `npm run build` | Production build (typecheck + Vite build) |
+| `npm run eval` | Persona-distinctness report (add `:ollama` for real models) |
 
 ---
 

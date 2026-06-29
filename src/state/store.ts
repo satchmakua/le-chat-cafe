@@ -30,6 +30,8 @@ const OLLAMA_URL = 'http://localhost:11434';
 const KV_SUMMARIZED = 'summarizedCount';
 const KV_OVERRIDES = 'personaOverrides';
 const KV_CONFIG = 'conductorConfig';
+const KV_MUTED = 'muted';
+const KV_TOPIC = 'topic';
 
 export type ProviderKind = 'mock' | 'ollama';
 
@@ -39,7 +41,6 @@ export interface ABSlot {
   pending: boolean;
 }
 export interface ABState {
-  prompt: string;
   a: ABSlot | null;
   b: ABSlot | null;
   running: boolean;
@@ -53,8 +54,8 @@ function welcomeMessage(): Message {
   return {
     id: uid(),
     channelId: CHANNEL_ID,
-    author: basePersonas[0]?.id ?? 'system',
-    text: '* welcome to le-chat-cafe — say hi *',
+    author: 'system',
+    text: '* welcome to le-chat-cafe — say hi (type /who, /help) *',
     ts: Date.now(),
   };
 }
@@ -81,9 +82,17 @@ interface RoomState {
   personaOverrides: Record<string, Partial<Persona>>;
   /** A/B comparison scratch state. */
   ab: ABState;
+  /** personaIds muted via /kick (excluded from the Conductor). */
+  muted: string[];
+  /** Channel topic shown in the header (/topic). */
+  topic: string;
 
   init: () => Promise<void>;
   sendUserMessage: (text: string) => void;
+  /** Append a `* … *` system notice (joins/leaves/topic/command output). */
+  postSystem: (text: string) => void;
+  /** Handle a `/command` typed in the composer. */
+  runCommand: (raw: string) => void;
   tick: (trigger: Trigger) => void;
   startGeneration: (persona: Persona) => Promise<void>;
   maybeSummarize: () => Promise<void>;
@@ -114,7 +123,9 @@ export const useRoom = create<RoomState>((set, get) => ({
   summarizedCount: 0,
   relationships: {},
   personaOverrides: {},
-  ab: { prompt: '', a: null, b: null, running: false },
+  ab: { a: null, b: null, running: false },
+  muted: [],
+  topic: '',
 
   async init() {
     if (initialized) return; // guard against React StrictMode double-invoke
@@ -134,14 +145,17 @@ export const useRoom = create<RoomState>((set, get) => ({
     // Hydrate everything persisted (DESIGN §6.2). If nothing's stored, persist
     // the seed welcome so the next reload restores it.
     try {
-      const [saved, mems, rels, summarized, overrides, savedConfig] = await Promise.all([
-        db.loadMessages(),
-        db.loadMemory(),
-        db.loadRelationships(),
-        db.getKV<number>(KV_SUMMARIZED),
-        db.getKV<Record<string, Partial<Persona>>>(KV_OVERRIDES),
-        db.getKV<Partial<ConductorConfig>>(KV_CONFIG),
-      ]);
+      const [saved, mems, rels, summarized, overrides, savedConfig, savedMuted, savedTopic] =
+        await Promise.all([
+          db.loadMessages(),
+          db.loadMemory(),
+          db.loadRelationships(),
+          db.getKV<number>(KV_SUMMARIZED),
+          db.getKV<Record<string, Partial<Persona>>>(KV_OVERRIDES),
+          db.getKV<Partial<ConductorConfig>>(KV_CONFIG),
+          db.getKV<string[]>(KV_MUTED),
+          db.getKV<string>(KV_TOPIC),
+        ]);
       if (saved.length > 0) {
         set({ messages: saved });
       } else {
@@ -166,6 +180,8 @@ export const useRoom = create<RoomState>((set, get) => ({
         personaOverrides,
         personas: derivePersonas(personaOverrides),
         config: { ...DEFAULT_CONDUCTOR_CONFIG, ...(savedConfig ?? {}) },
+        muted: savedMuted ?? [],
+        topic: savedTopic ?? '',
       });
     } catch {
       // no IndexedDB (private mode / unsupported) → in-memory session only
@@ -193,6 +209,8 @@ export const useRoom = create<RoomState>((set, get) => ({
           personaOverrides: {},
           personas: derivePersonas({}),
           config: DEFAULT_CONDUCTOR_CONFIG,
+          muted: [],
+          topic: '',
         });
       },
       bumpAffinity: (from: string, delta: number, to = 'user') =>
@@ -205,6 +223,10 @@ export const useRoom = create<RoomState>((set, get) => ({
   sendUserMessage(text) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (trimmed.startsWith('/')) {
+      get().runCommand(trimmed);
+      return;
+    }
     clearIdle();
     const msg: Message = {
       id: uid(),
@@ -219,9 +241,9 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
 
   tick(trigger) {
-    const { personas, messages, generating, config } = get();
+    const { personas, messages, generating, config, muted } = get();
     const chosen = selectSpeakers({
-      personas,
+      personas: personas.filter((p) => !muted.includes(p.id)),
       messages,
       trigger,
       generating: new Set(generating),
@@ -399,7 +421,6 @@ export const useRoom = create<RoomState>((set, get) => ({
 
     set({
       ab: {
-        prompt: trimmed,
         running: true,
         a: { personaId: aId, text: '', pending: true },
         b: { personaId: bId, text: '', pending: true },
@@ -436,6 +457,112 @@ export const useRoom = create<RoomState>((set, get) => ({
 
     await Promise.all([stream(pa, 'a'), stream(pb, 'b')]);
     set((s) => ({ ab: { ...s.ab, running: false } }));
+  },
+
+  postSystem(text) {
+    const msg: Message = { id: uid(), channelId: CHANNEL_ID, author: 'system', text, ts: Date.now() };
+    set((s) => ({ messages: [...s.messages, msg] }));
+    void db.saveMessage(msg).catch(() => {});
+  },
+
+  runCommand(raw) {
+    const parts = raw.slice(1).trim().split(/\s+/);
+    const cmd = (parts[0] ?? '').toLowerCase();
+    const args = parts.slice(1);
+    const { personas, muted } = get();
+    const find = (nick: string | undefined) =>
+      nick
+        ? personas.find(
+            (p) => p.name.toLowerCase() === nick.toLowerCase() || p.id === nick.toLowerCase(),
+          )
+        : undefined;
+
+    switch (cmd) {
+      case 'who': {
+        const list = personas
+          .map((p) => (muted.includes(p.id) ? `${p.name} (muted)` : p.name))
+          .join(', ');
+        get().postSystem(`* in the room: you, ${list} *`);
+        break;
+      }
+      case 'help':
+        get().postSystem(
+          '* commands: /who /msg <nick> <text> /kick <nick> /invite <nick> /topic <text> /me <action> /regen /fork *',
+        );
+        break;
+      case 'msg': {
+        const target = find(args[0]);
+        const body = args.slice(1).join(' ');
+        if (!target) {
+          get().postSystem(`* no one here called "${args[0] ?? ''}" *`);
+          break;
+        }
+        if (!body) break;
+        clearIdle();
+        const msg: Message = {
+          id: uid(),
+          channelId: CHANNEL_ID,
+          author: 'user',
+          text: `${target.name}: ${body}`,
+          ts: Date.now(),
+        };
+        set((s) => ({ messages: [...s.messages, msg] }));
+        void db.saveMessage(msg).catch(() => {});
+        if (!get().muted.includes(target.id)) void get().startGeneration(target);
+        break;
+      }
+      case 'kick': {
+        const target = find(args[0]);
+        if (!target) {
+          get().postSystem(`* no one here called "${args[0] ?? ''}" *`);
+          break;
+        }
+        if (!get().muted.includes(target.id)) {
+          const next = [...get().muted, target.id];
+          set({ muted: next });
+          void db.setKV(KV_MUTED, next).catch(() => {});
+        }
+        get().postSystem(`* ${target.name} has been kicked *`);
+        break;
+      }
+      case 'invite': {
+        const target = find(args[0]);
+        if (!target) {
+          get().postSystem(`* no one here called "${args[0] ?? ''}" *`);
+          break;
+        }
+        const next = get().muted.filter((id) => id !== target.id);
+        set({ muted: next });
+        void db.setKV(KV_MUTED, next).catch(() => {});
+        get().postSystem(`* ${target.name} has joined *`);
+        break;
+      }
+      case 'topic': {
+        const topic = args.join(' ');
+        set({ topic });
+        void db.setKV(KV_TOPIC, topic).catch(() => {});
+        get().postSystem(topic ? `* topic set: ${topic} *` : '* topic cleared *');
+        break;
+      }
+      case 'me': {
+        const action = args.join(' ');
+        if (action) get().postSystem(`* you ${action} *`);
+        break;
+      }
+      case 'regen':
+        get().regenerateLast();
+        break;
+      case 'fork': {
+        const lastUser = [...get().messages].reverse().find((m) => m.author === 'user');
+        if (lastUser) {
+          get().forkAt(lastUser.id);
+          get().postSystem('* rewound to your last message *');
+        }
+        break;
+      }
+      default:
+        get().postSystem(`* unknown command: /${cmd} (try /help) *`);
+    }
   },
 }));
 

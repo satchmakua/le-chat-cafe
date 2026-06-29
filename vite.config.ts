@@ -14,7 +14,9 @@ export default defineConfig({
     strictPort: false,
   },
   test: {
+    // Default to Node; component tests opt into jsdom via a per-file
+    // `// @vitest-environment jsdom` annotation (see tests/ui.test.tsx).
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.{ts,tsx}'],
   },
 });

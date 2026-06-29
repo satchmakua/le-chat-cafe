@@ -5,8 +5,8 @@ this is the working memory between build sessions. The forward-looking plan and
 acceptance tests live in [ROADMAP.md](ROADMAP.md); this is the backward-looking "what
 got done and why" companion.
 
-**Current phase:** Phase 2 underway (M4 built, awaiting test). Next: **M5 — Polish +
-evals** (see [ROADMAP.md](ROADMAP.md)).
+**Current phase:** v1 feature-complete (M0–M5 built, awaiting the human's in-browser
+test pass). See [ROADMAP.md](ROADMAP.md) for the post-v1 extension (real multiplayer).
 
 ### State of the tree
 
@@ -20,14 +20,51 @@ evals** (see [ROADMAP.md](ROADMAP.md)).
 | Memory | `src/runtime/memory.ts` | ✅ working window + long-term-notes summarization |
 | Affinity | `src/runtime/affinity.ts` | ✅ §aff sentinel strip, clamp/apply/decay, phrasing |
 | Playground | `src/runtime/playground.ts` | ✅ persona merge, fork, regen target, A/B prompt (pure) |
+| Eval | `src/eval/metrics.ts`, `eval/run.ts` | ✅ distinctness metrics + `npm run eval` harness |
 | Persistence | `src/persist/db.ts` | ✅ IndexedDB v2 (messages, memory, relationships, kv) via `idb` |
 | Personas | `src/personas/*.json` | ✅ 4 personas, glob-loaded (data-driven) |
-| Room state | `src/state/store.ts` | ✅ ticks, concurrency, idle, streaming, persist, affinity, playground |
-| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, badge, hearts, fork buttons, Playground drawer |
-| Themes / commands / evals | — | ⛔ not built (M5) |
-| Tests | `tests/*.test.ts` | ✅ 47 passing (conductor, runtime, memory, persist, affinity, playground, seam) |
+| Room state | `src/state/store.ts` | ✅ ticks, streaming, persist, affinity, playground, /commands, mute |
+| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, CRT/AIM themes, hearts, typing, Playground, system lines |
+| Tests | `tests/*.test.{ts,tsx}` | ✅ 53 passing (+ jsdom component tests, eval metrics) |
 
 ---
+
+## M5 — Polish + evals · built 2026-06-28 (awaiting test)
+
+**What shipped:** the v1 finishing pass.
+- **CRT ↔ AIM themes** — a header toggle that swaps `document.documentElement`'s
+  `data-theme`; both palettes (and font + radius) are pure CSS variables in
+  `index.css`, so the whole room restyles instantly. Choice persists in localStorage.
+- **`/commands`** — `/who`, `/help`, `/msg <nick> <text>`, `/kick <nick>` (mute),
+  `/invite <nick>` (unmute), `/topic <text>`, `/me <action>`, `/regen`, `/fork`
+  (rewind to your last message). Parsed in the store; output is rendered as dim
+  italic `* … *` system notices (new `author: 'system'`). Muted personas are excluded
+  from the Conductor; mute + topic persist.
+- **Typing indicators** — a pending message with no text yet shows "Nick is typing…"
+  until the first token lands.
+- **Eval harness (§6.8)** — `npm run eval` (and `eval:ollama`) samples each persona on
+  5 fixed prompts and reports avg words, vocab size, and mean pairwise vocab overlap →
+  a distinctness score. Metric functions (`src/eval/metrics.ts`) are pure + unit-tested;
+  the runnable script (`eval/run.ts`) loads personas from disk so it runs under `tsx`.
+
+**Key decisions:**
+- **Themes are data, not forks.** No per-theme component code — just two CSS-variable
+  sets, so adding a theme is adding a `[data-theme]` block.
+- **Commands route before chat.** `sendUserMessage` intercepts a leading `/`; everything
+  else is unchanged, so the command layer is a thin front door, not a rewrite.
+- **Eval reads JSON from disk.** The harness can't use the Vite `import.meta.glob`
+  persona loader under plain `tsx`, so it `readdirSync`s `src/personas/*.json` directly.
+- **Component tests opt into jsdom per-file** (`// @vitest-environment jsdom`) so the
+  fast Node suite stays the default; added `@testing-library/react` + `jsdom`.
+
+**Verified:** `npm run typecheck` clean; **53/53 tests pass** (+4 eval metrics, +2 jsdom
+component tests for MessageList/NickList); `npm run build` clean; `npm run eval` prints a
+full distinctness report (mock distinctness 0.71, as expected for the canned pool). In
+the headless browser: toggling the theme flipped `data-theme` crt→aim and the body from
+dark mono (`rgb(11,15,10)`) to light sans (`rgb(238,243,251)`) instantly; `/who`,
+`/topic` (header updated to "# cafe — neon nights"), `/kick` (second `/who` showed "Dex
+(muted)"), and `/me` all produced the right system lines; no console errors. Human still
+to confirm the in-browser Test with real Ollama (ROADMAP M5).
 
 ## M4 — Playground · built 2026-06-28 (awaiting test)
 

@@ -13,38 +13,46 @@ export function MessageList() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const colorOf = (author: string) =>
-    author === 'user'
-      ? 'var(--user-color)'
-      : (personas.find((p) => p.id === author)?.color ?? 'var(--fg)');
-
-  const nameOf = (author: string) =>
-    author === 'user' ? 'you' : (personas.find((p) => p.id === author)?.name ?? author);
-
   return (
     <div className={styles.list}>
-      {messages.map((m) => (
-        <div key={m.id} className={styles.line}>
-          <span className={styles.ts}>{formatTimestamp(m.ts)}</span>{' '}
-          <span className={styles.nick} style={{ color: colorOf(m.author) }}>
-            {nameOf(m.author)}
-          </span>{' '}
-          <span className={styles.text}>
-            {m.text}
-            {m.pending && <span className={styles.cursor}>▋</span>}
-          </span>
-          {!m.pending && (
-            <button
-              className={styles.fork}
-              onClick={() => forkAt(m.id)}
-              title="rewind the conversation to here (discard everything after)"
-              aria-label="rewind to here"
-            >
-              ⑂
-            </button>
-          )}
-        </div>
-      ))}
+      {messages.map((m) => {
+        if (m.author === 'system') {
+          return (
+            <div key={m.id} className={styles.system}>
+              <span className={styles.ts}>{formatTimestamp(m.ts)}</span> {m.text}
+            </div>
+          );
+        }
+        const persona = m.author === 'user' ? undefined : personas.find((p) => p.id === m.author);
+        const name = m.author === 'user' ? 'you' : (persona?.name ?? m.author);
+        const color = m.author === 'user' ? 'var(--user-color)' : (persona?.color ?? 'var(--fg)');
+        return (
+          <div key={m.id} className={styles.line}>
+            <span className={styles.ts}>{formatTimestamp(m.ts)}</span>{' '}
+            <span className={styles.nick} style={{ color }}>
+              {name}
+            </span>{' '}
+            {m.pending && !m.text ? (
+              <span className={styles.typing}>is typing…</span>
+            ) : (
+              <span className={styles.text}>
+                {m.text}
+                {m.pending && <span className={styles.cursor}>▋</span>}
+              </span>
+            )}
+            {!m.pending && (
+              <button
+                className={styles.fork}
+                onClick={() => forkAt(m.id)}
+                title="rewind the conversation to here (discard everything after)"
+                aria-label="rewind to here"
+              >
+                ⑂
+              </button>
+            )}
+          </div>
+        );
+      })}
       <div ref={endRef} />
     </div>
   );
