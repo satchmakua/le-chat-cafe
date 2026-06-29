@@ -10,6 +10,15 @@ export function Playground({ onClose }: { onClose: () => void }) {
   const updateConfig = useRoom((s) => s.updateConfig);
   const regenerateLast = useRoom((s) => s.regenerateLast);
   const runAB = useRoom((s) => s.runAB);
+  const networked = useRoom((s) => s.networked);
+  const connect = useRoom((s) => s.connect);
+  const disconnect = useRoom((s) => s.disconnect);
+
+  const [relayUrl, setRelayUrl] = useState('ws://localhost:8787');
+  const [room, setRoom] = useState('cafe');
+  const [nick, setNick] = useState('guest');
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState('');
 
   const [editId, setEditId] = useState(personas[0]?.id ?? '');
   const persona = personas.find((p) => p.id === editId) ?? personas[0];
@@ -134,6 +143,43 @@ export function Playground({ onClose }: { onClose: () => void }) {
           ↻ regenerate last line
         </button>
         <p className={styles.hint}>Fork/rewind: hover any message and click ⑂.</p>
+      </section>
+
+      {/* Multiplayer (DESIGN §11) */}
+      <section className={styles.section}>
+        <h3 className={styles.h3}>Multiplayer</h3>
+        {networked ? (
+          <>
+            <p className={styles.hint}>Connected to room "{room}" as {nick}.</p>
+            <button className={styles.btn} onClick={disconnect}>
+              disconnect
+            </button>
+          </>
+        ) : (
+          <>
+            <label className={styles.label}>relay URL</label>
+            <input className={styles.input} value={relayUrl} onChange={(e) => setRelayUrl(e.target.value)} />
+            <div className={styles.row}>
+              <input className={styles.input} value={room} onChange={(e) => setRoom(e.target.value)} placeholder="room" />
+              <input className={styles.input} value={nick} onChange={(e) => setNick(e.target.value)} placeholder="nick" />
+            </div>
+            <button
+              className={styles.btn}
+              disabled={connecting}
+              onClick={() => {
+                setConnecting(true);
+                setConnectError('');
+                connect(relayUrl, room, nick)
+                  .catch(() => setConnectError('could not reach the relay — is `npm run relay` running?'))
+                  .finally(() => setConnecting(false));
+              }}
+            >
+              {connecting ? 'connecting…' : 'connect'}
+            </button>
+            {connectError && <p className={styles.hint}>{connectError}</p>}
+            <p className={styles.hint}>Run `npm run relay`, then connect two tabs to the same room.</p>
+          </>
+        )}
       </section>
 
       {/* A/B */}

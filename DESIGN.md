@@ -479,10 +479,10 @@ something. Scaffold turns this list into `ROADMAP.md` (adding explicit Test step
   coloring, and the §6.8 eval harness. **Proves:** it *feels* like a chat client and
   personas are measurably distinct.
 
-**Documented post-v1 extension — real multiplayer.** Add a thin Node + WebSocket
-relay. Because the Room already treats humans and personas as interchangeable
-participants, a second human is just another participant id; the Conductor is
-unaffected. Not built in v1.
+**Post-v1 extension — real multiplayer (M6).** A thin Node + WebSocket relay so a
+second human joins as just another participant. Specified in §11. This crosses the v1
+"no backend" line deliberately and only on an explicit green light; single-player stays
+the default and is unaffected.
 
 ---
 
@@ -531,3 +531,73 @@ unaffected. Not built in v1.
   instinct, applied here to social memory (§6.3).
 - **Character.AI** — closest commercial cousin, but one-on-one and cloud;
   le-chat-cafe's differentiators are the *multi-persona room* and *local-first* stack.
+
+---
+
+## 11. Post-v1 extension — multiplayer relay (M6)
+
+Goal: two (or more) humans share a room. The Room already treats humans and personas
+as interchangeable participants, so this is mostly a *transport* problem, not a core
+rewrite. Built only on explicit go-ahead; single-player remains the zero-config default.
+
+**The decisions (the forks that matter):**
+
+1. **Thin relay, no LLM on the server.** A small Node + [`ws`](https://github.com/websockets/ws)
+   server routes messages and tracks presence per room. It never talks to Ollama —
+   local-first is preserved; inference stays on a client's machine.
+2. **Host-authoritative personas.** Exactly one connected client is the **host**: it
+   runs the Conductor + Persona Runtime against *its* local Ollama and publishes persona
+   turns. Other clients send their human messages and render the broadcast. This avoids
+   duplicate persona replies and keeps the Conductor logic untouched — only the host
+   ticks. (First client that advertises `canHost` wins; others are participants.)
+3. **`Transport` port (mirrors `LLMProvider`).** `LocalTransport` (single-player, no-op)
+   and `WSTransport` (browser-native `WebSocket`). The store routes outbound messages
+   through the transport and ingests inbound ones; when not connected it's a no-op, so
+   single-player behavior is byte-identical.
+4. **Relay is the single source of order.** A client `say`s a message; the relay stamps
+   a monotonic `seq` and broadcasts to *everyone* (including the sender), who append on
+   receipt. No optimistic local append in networked mode → consistent ordering, no dupes.
+5. **Snapshot on join; host persists.** Joiners are ephemeral viewers — on `hello` they
+   receive the current participant list + a recent message snapshot. Only the host writes
+   to IndexedDB (the canonical log). Keeps consistency trivial.
+6. **Streaming over the wire is a later slice.** Within a milestone budget, persona/host
+   turns broadcast as final messages first; cross-network token-delta streaming +
+   reconnection resync come in M6.2.
+
+**Wire protocol** (small JSON envelopes, shared by client + server):
+
+```ts
+type Participant = { id: string; name: string; kind: 'human' | 'persona'; isHost?: boolean };
+
+type ClientMsg =
+  | { t: 'hello'; room: string; name: string; canHost: boolean }
+  | { t: 'say'; message: Message };          // a human (or, from the host, a persona) turn
+
+type ServerMsg =
+  | { t: 'welcome'; you: string; hostId: string; participants: Participant[]; log: Message[] }
+  | { t: 'presence'; participants: Participant[] }
+  | { t: 'message'; seq: number; message: Message };  // broadcast to all
+```
+
+```ts
+interface Transport {
+  connect(opts: { url: string; room: string; name: string; canHost: boolean }): Promise<void>;
+  send(msg: ClientMsg): void;
+  onMessage(cb: (m: ServerMsg) => void): void;
+  isHost(): boolean;
+  close(): void;
+}
+```
+
+**Milestone slices:**
+- **M6.0 — Relay skeleton.** `ws` relay + `WSTransport`; two clients join a room and
+  exchange *human* messages with live presence (join/leave). Networked mode gates local
+  persona ticks (personas arrive in M6.1). Single-player untouched. **Proves the pipe.**
+- **M6.1 — Host-authoritative personas.** The host runs the Conductor and broadcasts
+  persona turns; joiners see the room banter. `/who` lists remote humans + personas.
+- **M6.2 — Streaming & resilience.** Token-delta streaming over WS, reconnection with
+  snapshot resync, nick-collision handling, host hand-off when the host leaves.
+
+**Risks:** host leaves → room loses personas (M6.2 hand-off); no auth/rooms-are-public
+(acceptable for LAN/co-op use — document it, don't add accounts); WS over the open
+internet needs TLS + a deploy story (out of scope; this targets LAN / tunnel use).
