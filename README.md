@@ -10,8 +10,9 @@ you, they talk to *each other*, and (later milestones) they remember how they fe
 about you across sessions. Lurk, jump in, or open the playground and tune the room
 like an instrument.
 
-**Status:** _M1 — multi-persona room with the Conductor_ — see [ROADMAP.md](ROADMAP.md)
-for the plan and [PROGRESS.md](PROGRESS.md) for what's shipped.
+**Status:** _M2 — multi-persona room with the Conductor, now persistent across reloads_
+— see [ROADMAP.md](ROADMAP.md) for the plan and [PROGRESS.md](PROGRESS.md) for what's
+shipped.
 
 ---
 
