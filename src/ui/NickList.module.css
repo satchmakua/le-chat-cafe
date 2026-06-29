@@ -31,6 +31,13 @@
   animation: blink 1s steps(2) infinite;
 }
 
+.aff {
+  float: right;
+  font-weight: normal;
+  font-size: 11px;
+  cursor: help;
+}
+
 @keyframes blink {
   0%,
   49% {

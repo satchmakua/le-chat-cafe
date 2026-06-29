@@ -27,6 +27,7 @@ describe('buildPrompt', () => {
     expect(system.role).toBe('system');
     expect(system.content).toContain('You are Caius.');
     expect(system.content).toContain('Mira, and the user'); // roster excludes self
+    expect(system.content).toContain('§aff'); // always teaches the affinity sentinel
 
     expect(user.role).toBe('user');
     expect(user.content).toContain('user: morning all');
@@ -43,8 +44,19 @@ describe('buildPrompt', () => {
       text: `line ${i}`,
       ts: i,
     }));
-    const [, user] = buildPrompt(caius, many, [caius, mira], 5);
+    const [, user] = buildPrompt(caius, many, [caius, mira], { window: 5 });
     expect(user.content).toContain('line 29');
     expect(user.content).not.toContain('line 24'); // outside the last 5
+  });
+
+  it('injects notes and feelings when provided', () => {
+    const [system] = buildPrompt(caius, log, [caius, mira], {
+      notes: ['user is a dad to Atlas'],
+      affinities: { user: 0.7, mira: -0.5 },
+    });
+    expect(system.content).toContain('What you remember:');
+    expect(system.content).toContain('user is a dad to Atlas');
+    expect(system.content).toContain('warmly and fondly toward the user'); // 0.7 band
+    expect(system.content).toContain('Mira'); // peer feeling shown (|−0.5| ≥ 0.3)
   });
 });

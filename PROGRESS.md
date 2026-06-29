@@ -5,8 +5,8 @@ this is the working memory between build sessions. The forward-looking plan and
 acceptance tests live in [ROADMAP.md](ROADMAP.md); this is the backward-looking "what
 got done and why" companion.
 
-**Current phase:** Phase 1 underway (M2 built, awaiting test). Next: **M3 —
-Friendship sim** (see [ROADMAP.md](ROADMAP.md)).
+**Current phase:** Phase 2 underway (M4 built, awaiting test). Next: **M5 — Polish +
+evals** (see [ROADMAP.md](ROADMAP.md)).
 
 ### State of the tree
 
@@ -16,16 +16,93 @@ Friendship sim** (see [ROADMAP.md](ROADMAP.md)).
 | Providers | `src/llm/mock.ts`, `src/llm/ollama.ts` | ✅ Ollama default (probed at startup) + Mock fallback |
 | Data models | `src/core/types.ts` | ✅ full spec types in use |
 | Conductor | `src/core/conductor.ts` | ✅ pure scoring/selection (DESIGN §4); 15 unit tests |
-| Persona runtime | `src/runtime/personaRuntime.ts` | ✅ prompt builder + transcript (memory-aware) |
+| Persona runtime | `src/runtime/personaRuntime.ts` | ✅ prompt builder: transcript + memory + feelings + sentinel |
 | Memory | `src/runtime/memory.ts` | ✅ working window + long-term-notes summarization |
-| Persistence | `src/persist/db.ts` | ✅ IndexedDB (messages, memory, kv) via `idb` |
+| Affinity | `src/runtime/affinity.ts` | ✅ §aff sentinel strip, clamp/apply/decay, phrasing |
+| Playground | `src/runtime/playground.ts` | ✅ persona merge, fork, regen target, A/B prompt (pure) |
+| Persistence | `src/persist/db.ts` | ✅ IndexedDB v2 (messages, memory, relationships, kv) via `idb` |
 | Personas | `src/personas/*.json` | ✅ 4 personas, glob-loaded (data-driven) |
-| Room state | `src/state/store.ts` | ✅ ticks, concurrency, idle timer, streaming, hydrate + persist |
-| UI | `src/App.tsx`, `src/ui/*` | ✅ three-pane shell, provider badge, typing dots |
-| Affinity | — | ⛔ not built (M3) |
-| Tests | `tests/*.test.ts` | ✅ 30 passing (conductor, runtime, memory, persist, seam) |
+| Room state | `src/state/store.ts` | ✅ ticks, concurrency, idle, streaming, persist, affinity, playground |
+| UI | `src/App.tsx`, `src/ui/*` | ✅ shell, badge, hearts, fork buttons, Playground drawer |
+| Themes / commands / evals | — | ⛔ not built (M5) |
+| Tests | `tests/*.test.ts` | ✅ 47 passing (conductor, runtime, memory, persist, affinity, playground, seam) |
 
 ---
+
+## M4 — Playground · built 2026-06-28 (awaiting test)
+
+**What shipped:** the room is now a tunable instrument. A ⚙ button in the header opens
+a right-side **Playground drawer** (`src/ui/Playground.tsx`) with five live controls,
+all from DESIGN §6.7:
+- **Persona editor** — pick a persona, edit its system prompt, model tag, temperature,
+  and top_p. Edits merge onto the JSON base as *overrides*, apply on the persona's next
+  turn, and **persist** (so they survive reload).
+- **Conductor tuning** — sliders for idle-break seconds, max concurrent, and min score
+  ("room energy"), persisted.
+- **Regenerate** — drop the last persona line and re-run that persona.
+- **Fork/rewind** — hover any message, click ⑂ to truncate the timeline there.
+- **A/B** — run one prompt through two personas side by side, streamed.
+
+**Key decisions:**
+- **Edits are overrides, not rewrites.** `personaOverrides` (a partial-Persona map) is
+  merged onto the glob-loaded JSON via `mergePersona`, kept in `kv`. Personas stay
+  data-driven; the JSON is never mutated, so a base edit still flows through for
+  untouched fields. (This is the persona-persistence deferred from M2.)
+- **Fork = single-timeline rewind.** Rather than maintaining parallel branches, forking
+  truncates after the chosen message (`truncateAfter`) and deletes the rest from
+  IndexedDB — a usable "explore from here" that stays simple and runnable.
+- **A/B is out-of-band.** It streams into separate scratch state (`ab`), reusing the
+  provider port and a one-shot `buildABPrompt` — it doesn't touch the room log,
+  Conductor, or affinity.
+- **Pure helpers, thin store.** merge/fork/regen-target/AB-prompt all live in
+  `src/runtime/playground.ts` and are unit-tested; the store just wires them to
+  persistence and streaming.
+
+**Verified:** `npm run typecheck` clean; **47/47 tests pass** (+6 playground); `npm run
+build` clean. In the headless browser (Mock): opened the drawer (4 sections render);
+**A/B** produced two distinct streamed columns (Caius vs Dex); edited Caius's model to
+`qwen3:8b` → persisted to IndexedDB and **survived a reload** (re-applied on hydrate);
+**regenerate** swapped the last line for a fresh one; **fork** truncated the log to the
+clicked message; no console errors. Human still to confirm the in-browser Test with real
+Ollama — esp. that editing a prompt visibly changes the next turn and swapping a model
+changes character (ROADMAP M4).
+
+## M3 — Friendship sim · built 2026-06-28 (awaiting test)
+
+**What shipped:** the room now has feelings that stick. Each persona carries an
+**affinity** in [-1, 1] toward the user (and toward each peer), seeded from its
+`warmth` and nudged by a hidden sentinel it can append to a reply:
+`§aff {"user": 0.05}§`. The runtime (`src/runtime/affinity.ts`) strips that line
+*before display* — and crucially **mid-stream**, by only ever showing text before the
+`§aff` marker, so it never flashes on screen. Deltas are clamped to ±0.15/turn, applied
+into [-1, 1], persisted to a new IndexedDB `relationships` store (DB bumped to v2), and
+**decayed ×0.98 on each session load** so feelings drift back toward neutral instead of
+spiraling. `buildPrompt` injects each persona's current feelings ("You feel warmly
+toward the user.") so tone actually shifts with affinity. The nick list shows a colored
+♥ per persona (green warm → red cool) with the numeric value on hover.
+
+**Key decisions:**
+- **Sentinel, not a structured call.** Affinity rides the streamed turn via the
+  stripped `§aff` line because structured outputs can't combine with streaming
+  (DESIGN §6.4). `stripAffinity` collects deltas from *every* sentinel and removes them
+  all; a malformed one is dropped, never leaked. The structured-`generate()` fallback
+  stays documented for later if sentinels prove noisy.
+- **Affinity is pure + derived.** All math (strip, visibleText, clampDelta, applyDelta,
+  decay, baseline-from-warmth, phrasing, target resolution) is pure and unit-tested;
+  the store just orchestrates and persists.
+- **Warmth seeds the baseline.** Persona→user starts at `warmth − 0.5` (Mira fond at
+  +0.35, Dex guarded at −0.20), so personalities feel distinct from message one even
+  before any interaction; peers start neutral.
+- **Dev affordance:** `window.__cafe.bumpAffinity(personaId, delta, target?)` for
+  testing the affinity UI/persistence without waiting on the model.
+
+**Verified:** `npm run typecheck` clean; **41/41 tests pass** (+10 affinity, +1 prompt
+injection); `npm run build` clean. In the headless browser: baseline hearts rendered
+per-persona from warmth (Mira +0.35 green, Dex −0.20 red); four +0.15 bumps moved Dex
+−0.20 → **0.40** (clamping correct) and turned the heart green; after a same-origin
+reload Dex read **0.39** — i.e. the relationship persisted *and* decayed (0.40 × 0.98);
+no `§aff` ever appeared in the log; no console errors. Human still to confirm the
+in-browser Test with real Ollama (warm/cool tone shift across a session), ROADMAP M3.
 
 ## M2 — Persistence + memory · built 2026-06-28 (awaiting test)
 

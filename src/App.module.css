@@ -51,6 +51,26 @@
   color: var(--dim);
 }
 
+.headRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gear {
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0;
+  line-height: 1;
+}
+
+.gear:hover {
+  color: var(--fg);
+}
+
 .status {
   font-size: 11px;
   text-transform: uppercase;
