@@ -119,8 +119,12 @@ cap. Get this right and the room feels alive; get it wrong and nothing else matt
 
 The Conductor evaluates on two triggers only:
 1. **On a new message** appended to the channel (from user or persona).
-2. **On the idle timer** — `IDLE_MS` (default **12000**) after the *last* message,
-   if the room is quiet and not already generating.
+2. **On the idle timer** — which is **bursty**, not fixed: the gap starts at
+   `idleMsMin` (default **4000**) while the room is "hot" and multiplies by
+   `idleBackoff` (default **2**) for each consecutive idle-driven turn, up to
+   `idleMsMax` (default **60000**). Any *human* message resets the streak. ±30%
+   jitter keeps the rhythm organic. Net effect: a burst of banter after you speak,
+   decaying into a lull, with the occasional revival — like a real room.
 
 It never runs on a raw interval/clock tick — that's what produces spam.
 
@@ -200,7 +204,9 @@ score. Prevents two chatty personas from locking out the room.
 
 ```ts
 interface ConductorConfig {
-  idleMs: number;          // 12000
+  idleMsMin: number;       // 4000 — burst gap while the room is hot
+  idleMsMax: number;       // 60000 — deepest lull between bursts
+  idleBackoff: number;     // 2 — gap multiplier per consecutive idle turn
   maxConcurrent: number;   // 2
   minScore: number;        // 25
   monologueCap: number;    // 3 of last 5

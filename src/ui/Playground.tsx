@@ -108,14 +108,23 @@ export function Playground({ onClose }: { onClose: () => void }) {
       {/* Conductor tuning */}
       <section className={styles.section}>
         <h3 className={styles.h3}>Room energy (Conductor)</h3>
-        <label className={styles.label}>idle break (seconds): {(config.idleMs / 1000).toFixed(0)}</label>
+        <label className={styles.label}>burst gap (seconds): {(config.idleMsMin / 1000).toFixed(0)}</label>
         <input
           type="range"
-          min={3}
-          max={60}
+          min={2}
+          max={20}
           step={1}
-          value={config.idleMs / 1000}
-          onChange={(e) => updateConfig({ idleMs: Number(e.target.value) * 1000 })}
+          value={config.idleMsMin / 1000}
+          onChange={(e) => updateConfig({ idleMsMin: Number(e.target.value) * 1000 })}
+        />
+        <label className={styles.label}>max lull (seconds): {(config.idleMsMax / 1000).toFixed(0)}</label>
+        <input
+          type="range"
+          min={10}
+          max={180}
+          step={5}
+          value={config.idleMsMax / 1000}
+          onChange={(e) => updateConfig({ idleMsMax: Number(e.target.value) * 1000 })}
         />
         <label className={styles.label}>max concurrent: {config.maxConcurrent}</label>
         <input

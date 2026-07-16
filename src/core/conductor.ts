@@ -18,13 +18,31 @@ export const BASE: Record<Reason, number> = {
 };
 
 export const DEFAULT_CONDUCTOR_CONFIG: ConductorConfig = {
-  idleMs: 12_000,
+  idleMsMin: 4_000,
+  idleMsMax: 60_000,
+  idleBackoff: 2,
   maxConcurrent: 2,
   minScore: 25,
   monologueCap: 3, // of the last MONOLOGUE_WINDOW messages
   chattinessWeight: 15,
   jitterMax: 10,
 };
+
+/**
+ * Bursty idle pacing (§4.1): the delay before the next idle turn. While the room
+ * is "hot" (streak 0) gaps sit at idleMsMin; each consecutive idle-driven turn
+ * multiplies the gap by idleBackoff up to idleMsMax, so bursts of chatter decay
+ * into a lull. A human message resets the streak (the caller's job). ±30% jitter
+ * keeps the rhythm from feeling metronomic.
+ */
+export function nextIdleDelay(
+  idleStreak: number,
+  config: ConductorConfig,
+  rng: () => number = Math.random,
+): number {
+  const base = Math.min(config.idleMsMin * Math.pow(config.idleBackoff, idleStreak), config.idleMsMax);
+  return Math.round(base * (0.7 + rng() * 0.6));
+}
 
 const MONOLOGUE_WINDOW = 5;
 

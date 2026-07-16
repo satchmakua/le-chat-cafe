@@ -5,7 +5,8 @@ import { OllamaProvider } from '../llm/ollama';
 import { resolveModel } from '../llm/models';
 import type { ConductorConfig, Message, Persona, PersonaMemory, Relationship } from '../core/types';
 import type { Trigger } from '../core/conductor';
-import { DEFAULT_CONDUCTOR_CONFIG, selectSpeakers } from '../core/conductor';
+import { DEFAULT_CONDUCTOR_CONFIG, nextIdleDelay, selectSpeakers } from '../core/conductor';
+import { isEcho, sentences, stripNamePrefix } from '../runtime/repetition';
 import { buildPrompt, formatTranscript } from '../runtime/personaRuntime';
 import {
   KEEP_VERBATIM,
@@ -133,6 +134,9 @@ let initialized = false;
 let summarizing = false;
 let transport: Transport | null = null;
 const modelNoticeShown = new Set<string>(); // one substitution notice per persona+tag
+// Consecutive idle-driven turns since the last human message — drives the bursty
+// idle pacing (§4.1): gaps grow with the streak, a human message resets it.
+let idleStreak = 0;
 
 export const useRoom = create<RoomState>((set, get) => ({
   personas: basePersonas,
@@ -295,6 +299,8 @@ export const useRoom = create<RoomState>((set, get) => ({
       } else if (m.t === 'message') {
         // Canonical, ordered message: upsert (finalizes a streamed turn for viewers).
         const exists = get().messages.some((x) => x.id === m.message.id);
+        const fromHuman = m.message.author === 'user' || m.message.author.startsWith('human:');
+        if (fromHuman) idleStreak = 0; // a human spoke — the room heats back up
         set((s) => ({
           messages: exists
             ? s.messages.map((x) => (x.id === m.message.id ? m.message : x))
@@ -304,6 +310,11 @@ export const useRoom = create<RoomState>((set, get) => ({
       } else if (m.t === 'stream') {
         // Live token update for a persona turn — viewers only (the host streams locally).
         if (get().isHost) return;
+        // A final empty frame retracts the turn (the host's echo guard dropped it).
+        if (!m.message.pending && !m.message.text) {
+          set((s) => ({ messages: s.messages.filter((x) => x.id !== m.message.id) }));
+          return;
+        }
         set((s) => ({
           messages: s.messages.some((x) => x.id === m.message.id)
             ? s.messages.map((x) => (x.id === m.message.id ? { ...x, text: m.message.text, pending: m.message.pending } : x))
@@ -332,6 +343,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       get().runCommand(trimmed);
       return;
     }
+    idleStreak = 0; // a human spoke — the room heats back up (§4.1)
     // Networked: send through the relay; it broadcasts back and we append on
     // receipt (the relay is the single source of order). No local append/persist.
     if (get().networked && transport) {
@@ -419,7 +431,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       for await (const chunk of provider.chat(req)) {
         if (!chunk.token) continue;
         raw += chunk.token;
-        const shown = visibleText(raw);
+        const shown = stripNamePrefix(visibleText(raw), persona.name);
         set((s) => ({
           messages: s.messages.map((m) => (m.id === replyId ? { ...m, text: shown } : m)),
         }));
@@ -440,25 +452,48 @@ export const useRoom = create<RoomState>((set, get) => ({
       const note = err instanceof Error ? err.message : String(err);
       if (!raw) raw = `(couldn't reach the model — ${note})`;
     } finally {
-      const { clean, deltas } = stripAffinity(raw);
+      const { clean: stripped, deltas } = stripAffinity(raw);
+      const clean = stripNamePrefix(stripped, persona.name);
+      // Echo guard (DESIGN §9): small models sometimes parrot their character
+      // prompt or a line they already said. Drop such turns — a beat of silence
+      // reads better than a stuck record.
+      const priors = [
+        ...get()
+          .messages.filter((m) => m.author === persona.id && m.id !== replyId && !m.pending)
+          .slice(-6)
+          .map((m) => m.text),
+        ...sentences(persona.systemPrompt),
+      ];
+      const dropped = !clean || isEcho(clean, priors);
       set((s) => ({
-        messages: s.messages.map((m) => (m.id === replyId ? { ...m, text: clean, pending: false } : m)),
+        messages: dropped
+          ? s.messages.filter((m) => m.id !== replyId)
+          : s.messages.map((m) => (m.id === replyId ? { ...m, text: clean, pending: false } : m)),
         generating: s.generating.filter((id) => id !== persona.id),
       }));
-      get().applyAffinityDeltas(persona.id, deltas);
-      const finalized = get().messages.find((m) => m.id === replyId);
-      if (finalized) {
+      if (dropped) {
+        // Retract any live frames viewers already saw (empty final = remove).
         if (get().networked) {
-          // Host: publish the persona turn to the room (joiners render it). The
-          // relay echoes it back, where ingest dedups by id. (Streaming over the
-          // wire is M6.2; for now joiners get the final message.)
-          transport?.send({ t: 'say', message: finalized });
-        } else {
-          void db.saveMessage(finalized).catch(() => {});
+          transport?.send({
+            t: 'stream',
+            message: { id: replyId, channelId: CHANNEL_ID, author: persona.id, text: '', ts: pending.ts, pending: false },
+          });
         }
+      } else {
+        get().applyAffinityDeltas(persona.id, deltas);
+        const finalized = get().messages.find((m) => m.id === replyId);
+        if (finalized) {
+          if (get().networked) {
+            // Host: publish the persona turn to the room (joiners render it). The
+            // relay echoes it back, where ingest dedups by id.
+            transport?.send({ t: 'say', message: finalized });
+          } else {
+            void db.saveMessage(finalized).catch(() => {});
+          }
+        }
+        void get().maybeSummarize();
       }
-      void get().maybeSummarize();
-      get().tick('message'); // a new line landed — let others react / fill freed slots
+      get().tick('message'); // the room moved — let others react / fill freed slots
     }
   },
 
@@ -606,13 +641,13 @@ export const useRoom = create<RoomState>((set, get) => ({
         })) {
           if (!chunk.token) continue;
           raw += chunk.token;
-          setSlot(slot, { text: visibleText(raw) });
+          setSlot(slot, { text: stripNamePrefix(visibleText(raw), persona.name) });
         }
       } catch (err) {
         const note = err instanceof Error ? err.message : String(err);
         if (!raw) raw = `(error — ${note})`;
       } finally {
-        setSlot(slot, { text: stripAffinity(raw).clean, pending: false });
+        setSlot(slot, { text: stripNamePrefix(stripAffinity(raw).clean, persona.name), pending: false });
       }
     };
 
@@ -663,6 +698,7 @@ export const useRoom = create<RoomState>((set, get) => ({
         }
         if (!body) break;
         const text = `${target.name}: ${body}`;
+        idleStreak = 0; // a human spoke
         // Networked: send as a normal human turn; the host's Conductor sees the
         // mention and answers. Single-player: append + drive the persona directly.
         if (get().networked && transport) {
@@ -746,6 +782,7 @@ function scheduleIdle(): void {
   const { config } = useRoom.getState();
   idleTimer = setTimeout(() => {
     idleTimer = null;
+    idleStreak += 1; // deepen the lull even if nobody ends up speaking
     useRoom.getState().tick('idle');
-  }, config.idleMs);
+  }, nextIdleDelay(idleStreak, config));
 }

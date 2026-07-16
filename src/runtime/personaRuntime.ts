@@ -74,7 +74,8 @@ export function buildPrompt(
     `You are "${persona.name}" in a live group chat with ${roster}. ` +
     `Stay fully in character. Keep replies short — 1 to 3 sentences, casual chat style. ` +
     `Reply with only your message: no name prefix, no quotation marks, no narration. ` +
-    `Don't repeat what you or others just said.` +
+    `Never describe or restate who you are, and never repeat or rephrase a line you or ` +
+    `others already said — react to the newest message and add something new.` +
     feelingsBlock +
     memory +
     sentinel;

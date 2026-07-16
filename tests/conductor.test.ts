@@ -8,6 +8,7 @@ import {
   matchesInterest,
   mentionsPersona,
   messagesSinceLastSpoke,
+  nextIdleDelay,
   recentAuthorCount,
   selectSpeakers,
   type SelectContext,
@@ -169,5 +170,30 @@ describe('selectSpeakers', () => {
     // caius mentioned (100-tier), mira only topic-event (40-tier) → caius first.
     const chosen = selectSpeakers(ctx({ personas: [caius, mira], messages: [msg('user', 'Caius likes coffee')] }));
     expect(chosen[0].personaId).toBe('caius');
+  });
+});
+
+// --- bursty idle pacing (§4.1) ---
+
+describe('nextIdleDelay', () => {
+  const MID = () => 0.5; // jitter factor exactly 1.0
+
+  it('starts at idleMsMin while the room is hot', () => {
+    expect(nextIdleDelay(0, DEFAULT_CONDUCTOR_CONFIG, MID)).toBe(4000);
+  });
+
+  it('backs off exponentially with the idle streak', () => {
+    expect(nextIdleDelay(1, DEFAULT_CONDUCTOR_CONFIG, MID)).toBe(8000);
+    expect(nextIdleDelay(3, DEFAULT_CONDUCTOR_CONFIG, MID)).toBe(32000);
+  });
+
+  it('caps at idleMsMax (the deepest lull)', () => {
+    expect(nextIdleDelay(4, DEFAULT_CONDUCTOR_CONFIG, MID)).toBe(60000); // 64000 capped
+    expect(nextIdleDelay(50, DEFAULT_CONDUCTOR_CONFIG, MID)).toBe(60000);
+  });
+
+  it('jitters ±30% around the base', () => {
+    expect(nextIdleDelay(0, DEFAULT_CONDUCTOR_CONFIG, () => 0)).toBe(2800); // ×0.7
+    expect(nextIdleDelay(0, DEFAULT_CONDUCTOR_CONFIG, () => 1)).toBe(5200); // ×1.3
   });
 });

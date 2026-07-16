@@ -61,7 +61,10 @@ export interface TurnCandidate {
 }
 
 export interface ConductorConfig {
-  idleMs: number; // 12000
+  /** Idle pacing is bursty: gaps start at min and back off toward max (§4.1). */
+  idleMsMin: number; // 4000 — gap between turns while the room is "hot"
+  idleMsMax: number; // 60000 — the deepest lull between bursts
+  idleBackoff: number; // 2 — each consecutive idle turn multiplies the gap
   maxConcurrent: number; // 2
   minScore: number; // 25
   monologueCap: number; // 3 of last 5
