@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { ChatRequest, LLMProvider } from '../llm/provider';
 import { MockProvider } from '../llm/mock';
 import { OllamaProvider } from '../llm/ollama';
+import { resolveModel } from '../llm/models';
 import type { ConductorConfig, Message, Persona, PersonaMemory, Relationship } from '../core/types';
 import type { Trigger } from '../core/conductor';
 import { DEFAULT_CONDUCTOR_CONFIG, selectSpeakers } from '../core/conductor';
@@ -72,6 +73,8 @@ interface RoomState {
   messages: Message[];
   provider: LLMProvider;
   providerKind: ProviderKind;
+  /** Model tags installed on the local Ollama ([] = unknown / mock). */
+  availableModels: string[];
   /** personaIds currently streaming (concurrency cap lives in the Conductor). */
   generating: string[];
   config: ConductorConfig;
@@ -113,6 +116,8 @@ interface RoomState {
   maybeSummarize: () => Promise<void>;
   affinityOf: (from: string, to: string) => number;
   applyAffinityDeltas: (from: string, deltas: Record<string, number>) => void;
+  /** The model tag to actually run for a persona (falls back to an installed one). */
+  modelFor: (persona: Persona) => string;
 
   // --- Playground (M4) ---
   updatePersona: (id: string, patch: Partial<Persona>) => void;
@@ -127,12 +132,14 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let initialized = false;
 let summarizing = false;
 let transport: Transport | null = null;
+const modelNoticeShown = new Set<string>(); // one substitution notice per persona+tag
 
 export const useRoom = create<RoomState>((set, get) => ({
   personas: basePersonas,
   messages: [welcomeMessage()],
   provider: new MockProvider(),
   providerKind: 'mock',
+  availableModels: [],
   generating: [],
   config: DEFAULT_CONDUCTOR_CONFIG,
   memory: {},
@@ -157,7 +164,14 @@ export const useRoom = create<RoomState>((set, get) => ({
     try {
       const res = await fetch(`${OLLAMA_URL}/api/tags`, { method: 'GET' });
       if (res.ok) {
-        set({ provider: new OllamaProvider({ baseUrl: OLLAMA_URL }), providerKind: 'ollama' });
+        // The tags list doubles as the installed-model inventory, so persona
+        // model tags can be resolved against what this machine actually has.
+        const data = (await res.json()) as { models?: { name: string }[] };
+        set({
+          provider: new OllamaProvider({ baseUrl: OLLAMA_URL }),
+          providerKind: 'ollama',
+          availableModels: (data.models ?? []).map((m) => m.name),
+        });
       }
     } catch {
       // stay on MockProvider
@@ -392,7 +406,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       if (other.id !== persona.id) affinities[other.id] = get().affinityOf(persona.id, other.id);
     }
     const req: ChatRequest = {
-      model: persona.model,
+      model: get().modelFor(persona),
       messages: buildPrompt(persona, history, personas, { notes, affinities }),
       options: { temperature: persona.params.temperature, top_p: persona.params.topP },
     };
@@ -459,7 +473,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       const transcript = formatTranscript(older, personas);
       // Sequential to be gentle on a single GPU (DESIGN §9 latency-stacking).
       for (const persona of personas) {
-        const incoming = await summarizeForPersona(provider, persona, transcript);
+        const incoming = await summarizeForPersona(provider, persona, transcript, get().modelFor(persona));
         if (incoming.length === 0) continue;
         const prev = get().memory[persona.id]?.notes ?? [];
         const updated: PersonaMemory = {
@@ -506,6 +520,21 @@ export const useRoom = create<RoomState>((set, get) => ({
       return { relationships };
     });
     for (const u of updates) void db.saveRelationship(u).catch(() => {});
+  },
+
+  modelFor(persona) {
+    const resolved = resolveModel(persona.model, get().availableModels);
+    if (resolved !== persona.model) {
+      const key = `${persona.id}:${persona.model}`;
+      if (!modelNoticeShown.has(key)) {
+        modelNoticeShown.add(key);
+        get().postSystem(
+          `* ${persona.name}'s model "${persona.model}" isn't installed — using "${resolved}" ` +
+            `(run \`ollama pull ${persona.model}\` or edit the persona in ⚙) *`,
+        );
+      }
+    }
+    return resolved;
   },
 
   // --- Playground (M4) ---
@@ -571,7 +600,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       let raw = '';
       try {
         for await (const chunk of provider.chat({
-          model: persona.model,
+          model: get().modelFor(persona),
           messages: buildABPrompt(persona, trimmed),
           options: { temperature: persona.params.temperature, top_p: persona.params.topP },
         })) {

@@ -60,9 +60,10 @@ export async function summarizeForPersona(
   provider: LLMProvider,
   persona: Persona,
   transcript: string,
+  model = persona.model, // caller may pass a resolved/installed tag
 ): Promise<string[]> {
   const raw = await provider.generate({
-    model: persona.model,
+    model,
     prompt: buildSummaryPrompt(persona, transcript),
   });
   return parseNotes(raw);

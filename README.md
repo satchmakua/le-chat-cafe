@@ -21,11 +21,17 @@ personas, live streaming, reconnection) so other humans can join. See
 ## Run it
 
 **Prerequisites:** Node.js ≥ 22 (check: `node -v`). For real personas, install
-[Ollama](https://ollama.com) and pull the model the personas use:
+[Ollama](https://ollama.com) and pull the models the personas use (see each
+`src/personas/*.json` — currently `qwen2.5:7b-instruct` and `qwen2.5:1.5b-instruct`):
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull qwen2.5:7b-instruct
+ollama pull qwen2.5:1.5b-instruct
 ```
+
+Don't have those exact tags? Fine — if a persona names a model that isn't installed,
+the app automatically substitutes the closest installed one (same family, else any)
+and posts a notice in the chat log.
 
 Ollama must allow the browser origin or the fetch is CORS-blocked. Start it with:
 
