@@ -2,9 +2,10 @@
 
 The milestone checklist.
 
-> **✅ v1 complete (M0–M5), 2026-06-28.** All milestones built, verified, and confirmed.
-> The only remaining item is the documented **post-v1** multiplayer relay (below) —
-> out of v1 scope; don't build it without a green light.
+> **✅ Entire roadmap complete (M0–M5 + M6.0–M6.2).** v1 confirmed 2026-06-28;
+> multiplayer (M6) confirmed 2026-07-17 by a two-browser-tab test — host/viewer
+> presence, cross-tab human messages, host-authoritative personas, live wire
+> streaming, and host hand-off all verified. No scheduled work remains.
 
 **Rules of the road:**
 - Each milestone is an **independently runnable** slice — something actually testable
@@ -74,7 +75,7 @@ See [DESIGN.md](DESIGN.md) for the full rationale; section refs below point into
 Crosses the v1 "no backend" line on purpose; single-player stays the default. Full
 spec in [DESIGN.md §11](DESIGN.md).
 
-- [ ] **M6.0 — Relay skeleton.** Thin Node + `ws` relay + a `Transport` port
+- [x] **M6.0 — Relay skeleton.** Thin Node + `ws` relay + a `Transport` port
   (`LocalTransport` no-op / `WSTransport`). Two clients join a room and exchange
   *human* messages with live presence (join/leave); networked mode gates local persona
   ticks. Single-player path unchanged. _(DESIGN §11)_
@@ -83,13 +84,13 @@ spec in [DESIGN.md §11](DESIGN.md).
   human. With no relay, the app behaves exactly as before. (`npm test` covers the relay
   with a two-client integration test.)
 
-- [ ] **M6.1 — Host-authoritative personas.** The host client runs the Conductor and
+- [x] **M6.1 — Host-authoritative personas.** The host client runs the Conductor and
   broadcasts persona turns; joiners see the room banter. `/who` lists remote humans +
   personas. _(DESIGN §11)_
   **Test:** two tabs connected, only the host has Ollama → personas reply and both tabs
   see the same turns in the same order; no duplicate persona lines.
 
-- [ ] **M6.2 — Streaming & resilience.** Token-delta streaming over WS, reconnection
+- [x] **M6.2 — Streaming & resilience.** Token-delta streaming over WS, reconnection
   with snapshot resync, nick-collision handling, host hand-off when the host leaves.
   _(DESIGN §11)_
   **Test:** persona replies stream live in the joiner's tab; kill/restart a tab → it
