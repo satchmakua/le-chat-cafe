@@ -11,6 +11,7 @@ import {
   nextIdleDelay,
   recentAuthorCount,
   selectSpeakers,
+  triggerMessage,
   type SelectContext,
 } from '../src/core/conductor';
 import type { Message, Persona } from '../src/core/types';
@@ -70,6 +71,13 @@ describe('predicates', () => {
   it('matchesInterest uses word boundaries (no "art" inside "start")', () => {
     expect(matchesInterest('i love coffee', caius)).toBe(true);
     expect(matchesInterest('let us start', caius)).toBe(false);
+  });
+
+  it('matches interests/names with symbol edges, where \\b fails', () => {
+    const dev = persona({ id: 'dev', interests: ['c++', '.net'] });
+    expect(matchesInterest('anyone know c++?', dev)).toBe(true);
+    expect(matchesInterest('is .net still a thing', dev)).toBe(true);
+    expect(matchesInterest('the c language', dev)).toBe(false); // not c++
   });
 
   it('messagesSinceLastSpoke / recentAuthorCount count correctly', () => {
@@ -170,6 +178,38 @@ describe('selectSpeakers', () => {
     // caius mentioned (100-tier), mira only topic-event (40-tier) → caius first.
     const chosen = selectSpeakers(ctx({ personas: [caius, mira], messages: [msg('user', 'Caius likes coffee')] }));
     expect(chosen[0].personaId).toBe('caius');
+  });
+});
+
+// --- reaction trigger selection ---
+
+describe('triggerMessage', () => {
+  it('skips pending placeholders and system notices to find the real trigger', () => {
+    const log = [
+      msg('user', 'what should we play?'),
+      msg('caius', 'Dex, back me up here'),
+      { ...msg('juno', ''), pending: true },
+      msg('system', '* topic set: games *'),
+    ];
+    expect(triggerMessage(log)?.text).toBe('Dex, back me up here');
+  });
+
+  it('is undefined when nothing qualifies', () => {
+    expect(triggerMessage([msg('system', '* welcome *')])).toBeUndefined();
+  });
+});
+
+describe('mentions survive a trailing pending line', () => {
+  it('a mention inside the newest finalized reply still fires', () => {
+    const dex = persona({ id: 'dex', name: 'Dex' });
+    // Caius's finalized reply mentions Dex; Juno's empty pending line sits after it.
+    const log = [
+      msg('user', 'what should we play?'),
+      msg('caius', 'Dex, back me up here'),
+      { ...msg('juno', ''), pending: true },
+    ];
+    const c = candidateFor(dex, ctx({ messages: log }), ZERO);
+    expect(c?.reason).toBe('mention');
   });
 });
 

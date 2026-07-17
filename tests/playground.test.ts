@@ -59,6 +59,15 @@ describe('lastPersonaMessage', () => {
     expect(lastPersonaMessage(log)?.text).toBe('newest');
   });
 
+  it('skips system notices and remote humans (else /regen goes dead after them)', () => {
+    const log = [
+      msg('mira', 'the real target'),
+      msg('human:2', 'a remote human line'),
+      msg('system', '* topic set: tea *'),
+    ];
+    expect(lastPersonaMessage(log)?.text).toBe('the real target');
+  });
+
   it('returns undefined when only user/empty messages exist', () => {
     expect(lastPersonaMessage([msg('user', 'hi')])).toBeUndefined();
   });

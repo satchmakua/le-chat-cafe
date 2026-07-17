@@ -14,6 +14,11 @@ export interface OllamaOptions {
  * line and yield content tokens. Structured output (`generate` with `format`)
  * is one-shot only and must not be combined with streaming (DESIGN §6.4).
  */
+/** Abort a stream that produces nothing for this long — a wedged socket (laptop
+ *  sleep, half-open TCP) would otherwise hold a Conductor slot forever. Generous
+ *  enough to survive a cold model load. */
+const STALL_MS = 120_000;
+
 export class OllamaProvider implements LLMProvider {
   private readonly baseUrl: string;
 
@@ -22,49 +27,62 @@ export class OllamaProvider implements LLMProvider {
   }
 
   async *chat(req: ChatRequest): AsyncIterable<ChatChunk> {
-    const res = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: req.model,
-        messages: req.messages,
-        stream: true,
-        options: req.options,
-      }),
-    });
+    const controller = new AbortController();
+    let watchdog = setTimeout(() => controller.abort(), STALL_MS);
+    const bump = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => controller.abort(), STALL_MS);
+    };
 
-    if (!res.ok || !res.body) {
-      throw new Error(
-        `Ollama chat failed (${res.status} ${res.statusText}). Is Ollama running, ` +
-          `the model pulled, and OLLAMA_ORIGINS set for the browser origin?`,
-      );
-    }
+    try {
+      const res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: req.model,
+          messages: req.messages,
+          stream: true,
+          options: req.options,
+        }),
+      });
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+      if (!res.ok || !res.body) {
+        throw new Error(
+          `Ollama chat failed (${res.status} ${res.statusText}). Is Ollama running, ` +
+            `the model pulled, and OLLAMA_ORIGINS set for the browser origin?`,
+        );
+      }
 
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
+      for (;;) {
+        const { value, done } = await reader.read();
+        bump();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-        const frame = JSON.parse(line) as { message?: { content?: string }; done?: boolean };
-        const token = frame.message?.content ?? '';
-        if (token) yield { token, done: false };
-        if (frame.done) {
-          yield { token: '', done: true };
-          return;
+        let nl: number;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+
+          const frame = JSON.parse(line) as { message?: { content?: string }; done?: boolean };
+          const token = frame.message?.content ?? '';
+          if (token) yield { token, done: false };
+          if (frame.done) {
+            yield { token: '', done: true };
+            return;
+          }
         }
       }
+      yield { token: '', done: true };
+    } finally {
+      clearTimeout(watchdog);
     }
-    yield { token: '', done: true };
   }
 
   async generate(req: GenerateRequest): Promise<string> {

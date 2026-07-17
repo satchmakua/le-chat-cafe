@@ -40,12 +40,37 @@ describe('stripAffinity', () => {
     expect(clean).toBe('hi');
     expect(deltas).toEqual({});
   });
+
+  it('strips an unterminated trailing sentinel and still recovers its deltas', () => {
+    // EOS truncation drops the closing § — the most common small-model failure.
+    const a = stripAffinity('nice one!\n§aff {"user": 0.08}');
+    expect(a.clean).toBe('nice one!');
+    expect(a.deltas).toEqual({ user: 0.08 });
+
+    // …or even the closing brace.
+    const b = stripAffinity('nice one!\n§aff {"user": 0.08');
+    expect(b.clean).toBe('nice one!');
+    expect(b.deltas).toEqual({ user: 0.08 });
+  });
+
+  it('never leaks any partial or stray marker into the clean text', () => {
+    expect(stripAffinity('cut off mid-marker §af').clean).toBe('cut off mid-marker');
+    expect(stripAffinity('gibberish §aff not-json trailing').clean).toBe('gibberish');
+    expect(stripAffinity('hello §aff {"user"').clean).toBe('hello');
+  });
 });
 
 describe('visibleText', () => {
   it('hides everything from the sentinel marker onward (mid-stream safety)', () => {
     expect(visibleText('hello there §aff {"user')).toBe('hello there');
     expect(visibleText('no sentinel yet')).toBe('no sentinel yet');
+  });
+
+  it('trims a partial marker split across streaming tokens', () => {
+    expect(visibleText('hello there §')).toBe('hello there');
+    expect(visibleText('hello there §a')).toBe('hello there');
+    expect(visibleText('hello there §af')).toBe('hello there');
+    expect(visibleText('hello there §aff')).toBe('hello there');
   });
 });
 

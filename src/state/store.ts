@@ -8,13 +8,7 @@ import type { Trigger } from '../core/conductor';
 import { DEFAULT_CONDUCTOR_CONFIG, nextIdleDelay, selectSpeakers } from '../core/conductor';
 import { isEcho, sentences, stripNamePrefix } from '../runtime/repetition';
 import { buildPrompt, formatTranscript } from '../runtime/personaRuntime';
-import {
-  KEEP_VERBATIM,
-  mergeNotes,
-  olderThanWindow,
-  shouldSummarize,
-  summarizeForPersona,
-} from '../runtime/memory';
+import { KEEP_VERBATIM, mergeNotes, shouldSummarize, summarizeForPersona } from '../runtime/memory';
 import {
   applyDelta,
   baselineAffinity,
@@ -55,13 +49,42 @@ function uid(): string {
   return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
 }
 
+// Monotonic message timestamps: user message + immediate reply often land in the
+// same millisecond, and IndexedDB's by-ts index breaks ties by (random) id — the
+// hydrated log could reorder a reply above its question.
+let lastTs = 0;
+function nextTs(): number {
+  const t = Math.max(Date.now(), lastTs + 1);
+  lastTs = t;
+  return t;
+}
+
+/** Remove exactly one occurrence — `filter` would clear duplicate reservations. */
+function removeOne(arr: string[], value: string): string[] {
+  const i = arr.indexOf(value);
+  return i < 0 ? arr : [...arr.slice(0, i), ...arr.slice(i + 1)];
+}
+
+/** After deleting messages (fork/regenerate), the summarization cursor may point
+ *  past the end of the log — summarization would stall until the log regrows. */
+function clampSummarizedCount(
+  set: (partial: Partial<RoomState>) => void,
+  get: () => RoomState,
+): void {
+  const clamped = Math.min(get().summarizedCount, Math.max(0, get().messages.length - KEEP_VERBATIM));
+  if (clamped !== get().summarizedCount) {
+    set({ summarizedCount: clamped });
+    void db.setKV(KV_SUMMARIZED, clamped).catch(() => {});
+  }
+}
+
 function welcomeMessage(): Message {
   return {
     id: uid(),
     channelId: CHANNEL_ID,
     author: 'system',
     text: '* welcome to le-chat-cafe — say hi (type /who, /help) *',
-    ts: Date.now(),
+    ts: nextTs(),
   };
 }
 
@@ -99,10 +122,15 @@ interface RoomState {
   isHost: boolean;
   /** This client's participant id when networked ('' otherwise). */
   myId: string;
+  /** Every id the relay has ever assigned this client (reconnects mint new ids) —
+   *  needed so the user's pre-reconnect lines still render as "you". */
+  myIds: string[];
   /** Participants reported by the relay (humans), when networked. */
   remoteParticipants: Participant[];
   /** Sticky id→name cache so a departed participant's old lines still show a nick. */
   participantNames: Record<string, string>;
+  /** Room/nick of the live connection (drives the Playground banner). */
+  connection: { room: string; name: string } | null;
 
   init: () => Promise<void>;
   connect: (url: string, room: string, name: string) => Promise<void>;
@@ -137,6 +165,11 @@ const modelNoticeShown = new Set<string>(); // one substitution notice per perso
 // Consecutive idle-driven turns since the last human message — drives the bursty
 // idle pacing (§4.1): gaps grow with the streak, a human message resets it.
 let idleStreak = 0;
+// Echo-guard cooldown: a dropped turn leaves no message in the log, so the persona
+// isn't on normal cooldown and the same trigger could re-select it immediately —
+// a stuck model would loop generate→drop→generate. Park it briefly instead.
+const droppedUntil = new Map<string, number>();
+const DROP_COOLDOWN_MS = 30_000;
 
 export const useRoom = create<RoomState>((set, get) => ({
   personas: basePersonas,
@@ -156,8 +189,10 @@ export const useRoom = create<RoomState>((set, get) => ({
   networked: false,
   isHost: true, // single-player drives its own personas
   myId: '',
+  myIds: [],
   remoteParticipants: [],
   participantNames: {},
+  connection: null,
 
   async init() {
     if (initialized) return; // guard against React StrictMode double-invoke
@@ -274,16 +309,19 @@ export const useRoom = create<RoomState>((set, get) => ({
     t.onMessage((m: ServerMsg) => {
       if (m.t === 'welcome') {
         const isHost = m.you === m.hostId;
-        set({
+        set((s) => ({
           networked: true,
           isHost,
           myId: m.you,
+          myIds: s.myIds.includes(m.you) ? s.myIds : [...s.myIds, m.you],
           remoteParticipants: m.participants,
           participantNames: cacheNames(m.participants),
           messages: m.log,
-        });
+        }));
         if (isHost) scheduleIdle(); // the host drives the room
       } else if (m.t === 'presence') {
+        const prevHostId = get().remoteParticipants.find((p) => p.isHost)?.id;
+        const newHostId = m.participants.find((p) => p.isHost)?.id;
         const me = m.participants.find((p) => p.id === get().myId);
         const becameHost = !!me?.isHost && !get().isHost;
         set({
@@ -291,20 +329,25 @@ export const useRoom = create<RoomState>((set, get) => ({
           participantNames: cacheNames(m.participants),
           isHost: me?.isHost ?? get().isHost,
         });
+        // The host changed (left/died): any still-pending streamed persona lines
+        // will never get their final `say` — drop the ghosts.
+        if (prevHostId && newHostId !== prevHostId) {
+          set((s) => ({ messages: s.messages.filter((x) => !x.pending) }));
+        }
         if (becameHost) {
           // Host hand-off: the relay promoted us when the previous host left.
           get().postSystem('* you are now the host — driving the personas *');
           scheduleIdle();
         }
       } else if (m.t === 'message') {
-        // Canonical, ordered message: upsert (finalizes a streamed turn for viewers).
+        // Canonical, ordered message. Append in relay order (moving a streamed
+        // provisional line to its final position) so every client — including
+        // late joiners hydrating from the snapshot — sees the same ordering.
         const exists = get().messages.some((x) => x.id === m.message.id);
         const fromHuman = m.message.author === 'user' || m.message.author.startsWith('human:');
         if (fromHuman) idleStreak = 0; // a human spoke — the room heats back up
         set((s) => ({
-          messages: exists
-            ? s.messages.map((x) => (x.id === m.message.id ? m.message : x))
-            : [...s.messages, m.message],
+          messages: [...s.messages.filter((x) => x.id !== m.message.id), m.message],
         }));
         if (!exists && get().isHost) get().tick('message'); // host reacts to genuinely new lines
       } else if (m.t === 'stream') {
@@ -323,16 +366,50 @@ export const useRoom = create<RoomState>((set, get) => ({
       }
     });
 
+    // Terminal connection loss (reconnects exhausted): drop back to single-player
+    // visibly instead of black-holing everything the user types.
+    t.onClose(() => {
+      if (transport !== t) return;
+      transport = null;
+      set({ networked: false, isHost: true, myId: '', remoteParticipants: [], connection: null });
+      get().postSystem('* connection lost — back to single-player *');
+      void db
+        .loadMessages()
+        .then((saved) => {
+          if (saved.length > 0) set({ messages: saved });
+        })
+        .catch(() => {});
+      scheduleIdle();
+    });
+
     // Every client offers to host; the relay makes the first one the host. (For
     // real personas that client should have Ollama; with Mock it drives stubs.)
-    await t.connect({ url, room, name, canHost: true });
+    try {
+      await t.connect({ url, room, name, canHost: true });
+    } catch (err) {
+      // Neutralize the failed transport (cancels any retry) and restore the
+      // single-player idle loop the clearIdle() above suspended.
+      t.close();
+      scheduleIdle();
+      throw err;
+    }
     transport = t;
+    set({ connection: { room, name } });
   },
 
   disconnect() {
     transport?.close();
     transport = null;
-    set({ networked: false, isHost: true, myId: '', remoteParticipants: [], participantNames: {} });
+    // Keep myIds + participantNames (sticky) so any retained lines stay readable;
+    // restore the persisted single-player timeline — the networked log is
+    // session-only and must not be built upon by single-player persistence.
+    set({ networked: false, isHost: true, myId: '', remoteParticipants: [], connection: null });
+    void db
+      .loadMessages()
+      .then((saved) => {
+        set({ messages: saved.length > 0 ? saved : [welcomeMessage()] });
+      })
+      .catch(() => {});
     scheduleIdle();
   },
 
@@ -347,16 +424,19 @@ export const useRoom = create<RoomState>((set, get) => ({
     // Networked: send through the relay; it broadcasts back and we append on
     // receipt (the relay is the single source of order). No local append/persist.
     if (get().networked && transport) {
-      transport.send({
+      const delivered = transport.send({
         t: 'say',
         message: {
           id: uid(),
           channelId: CHANNEL_ID,
           author: get().myId || 'user',
           text: trimmed,
-          ts: Date.now(),
+          ts: nextTs(),
         },
       });
+      if (!delivered) {
+        get().postSystem('* message not delivered — reconnecting to the relay… *');
+      }
       return;
     }
     clearIdle();
@@ -365,7 +445,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       channelId: CHANNEL_ID,
       author: 'user',
       text: trimmed,
-      ts: Date.now(),
+      ts: nextTs(),
     };
     set((s) => ({ messages: [...s.messages, msg] }));
     void db.saveMessage(msg).catch(() => {});
@@ -376,8 +456,11 @@ export const useRoom = create<RoomState>((set, get) => ({
     // In a networked room only the host drives personas; joiners just render.
     if (get().networked && !get().isHost) return;
     const { personas, messages, generating, config, muted } = get();
+    const now = Date.now();
     const chosen = selectSpeakers({
-      personas: personas.filter((p) => !muted.includes(p.id)),
+      personas: personas.filter(
+        (p) => !muted.includes(p.id) && (droppedUntil.get(p.id) ?? 0) <= now,
+      ),
       messages,
       trigger,
       generating: new Set(generating),
@@ -397,13 +480,17 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   async startGeneration(persona) {
     clearIdle();
+    // The persist/broadcast decision must reflect the mode this turn STARTED in —
+    // a mid-stream disconnect must not leak a networked turn into the
+    // single-player IndexedDB log (or vice versa).
+    const startedNetworked = get().networked;
     const replyId = uid();
     const pending: Message = {
       id: replyId,
       channelId: CHANNEL_ID,
       author: persona.id,
       text: '',
-      ts: Date.now(),
+      ts: nextTs(),
       pending: true,
     };
     // Reserve the concurrency slot + show the pending line synchronously, before
@@ -419,7 +506,11 @@ export const useRoom = create<RoomState>((set, get) => ({
     }
     const req: ChatRequest = {
       model: get().modelFor(persona),
-      messages: buildPrompt(persona, history, personas, { notes, affinities }),
+      messages: buildPrompt(persona, history, personas, {
+        notes,
+        affinities,
+        names: get().participantNames,
+      }),
       options: { temperature: persona.params.temperature, top_p: persona.params.topP },
     };
 
@@ -437,7 +528,7 @@ export const useRoom = create<RoomState>((set, get) => ({
         }));
         // Host: stream live token updates to viewers, throttled (the final `say`
         // below carries the canonical message). M6.2.
-        if (get().networked && transport) {
+        if (startedNetworked && transport) {
           const now = Date.now();
           if (now - lastStreamed > 100) {
             lastStreamed = now;
@@ -469,11 +560,12 @@ export const useRoom = create<RoomState>((set, get) => ({
         messages: dropped
           ? s.messages.filter((m) => m.id !== replyId)
           : s.messages.map((m) => (m.id === replyId ? { ...m, text: clean, pending: false } : m)),
-        generating: s.generating.filter((id) => id !== persona.id),
+        generating: removeOne(s.generating, persona.id),
       }));
       if (dropped) {
+        droppedUntil.set(persona.id, Date.now() + DROP_COOLDOWN_MS);
         // Retract any live frames viewers already saw (empty final = remove).
-        if (get().networked) {
+        if (startedNetworked) {
           transport?.send({
             t: 'stream',
             message: { id: replyId, channelId: CHANNEL_ID, author: persona.id, text: '', ts: pending.ts, pending: false },
@@ -483,7 +575,7 @@ export const useRoom = create<RoomState>((set, get) => ({
         get().applyAffinityDeltas(persona.id, deltas);
         const finalized = get().messages.find((m) => m.id === replyId);
         if (finalized) {
-          if (get().networked) {
+          if (startedNetworked) {
             // Host: publish the persona turn to the room (joiners render it). The
             // relay echoes it back, where ingest dedups by id.
             transport?.send({ t: 'say', message: finalized });
@@ -504,8 +596,14 @@ export const useRoom = create<RoomState>((set, get) => ({
 
     summarizing = true;
     try {
-      const older = olderThanWindow(messages);
-      const transcript = formatTranscript(older, personas);
+      // Digest only the delta that has aged out since the last pass — never the
+      // whole history (which would re-summarize old turns every time and grow the
+      // prompt without bound). The cursor snapshot is taken NOW so messages that
+      // arrive during the slow LLM loop below are left for the next pass.
+      const upper = Math.max(0, messages.length - KEEP_VERBATIM);
+      const older = messages.slice(summarizedCount, upper);
+      if (older.length === 0) return;
+      const transcript = formatTranscript(older, personas, undefined, get().participantNames);
       // Sequential to be gentle on a single GPU (DESIGN §9 latency-stacking).
       for (const persona of personas) {
         const incoming = await summarizeForPersona(provider, persona, transcript, get().modelFor(persona));
@@ -519,9 +617,8 @@ export const useRoom = create<RoomState>((set, get) => ({
         set((s) => ({ memory: { ...s.memory, [persona.id]: updated } }));
         void db.saveMemory(updated).catch(() => {});
       }
-      const newCount = Math.max(0, get().messages.length - KEEP_VERBATIM);
-      set({ summarizedCount: newCount });
-      void db.setKV(KV_SUMMARIZED, newCount).catch(() => {});
+      set({ summarizedCount: upper });
+      void db.setKV(KV_SUMMARIZED, upper).catch(() => {});
     } finally {
       summarizing = false;
     }
@@ -595,6 +692,7 @@ export const useRoom = create<RoomState>((set, get) => ({
     const persona = personas.find((p) => p.id === target.author);
     if (!persona) return;
     set({ messages: messages.filter((m) => m.id !== target.id) });
+    clampSummarizedCount(set, get);
     void db.deleteMessage(target.id).catch(() => {});
     void get().startGeneration(persona);
   },
@@ -604,6 +702,9 @@ export const useRoom = create<RoomState>((set, get) => ({
     const { kept, removed } = truncateAfter(get().messages, id);
     if (removed.length === 0) return;
     set({ messages: kept });
+    // A rewind can put the summarization cursor beyond the log's end, which
+    // would stall note-taking for hundreds of messages — clamp it back.
+    clampSummarizedCount(set, get);
     for (const m of removed) void db.deleteMessage(m.id).catch(() => {});
   },
 
@@ -656,9 +757,11 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
 
   postSystem(text) {
-    const msg: Message = { id: uid(), channelId: CHANNEL_ID, author: 'system', text, ts: Date.now() };
+    const msg: Message = { id: uid(), channelId: CHANNEL_ID, author: 'system', text, ts: nextTs() };
     set((s) => ({ messages: [...s.messages, msg] }));
-    void db.saveMessage(msg).catch(() => {});
+    // Networked notices are local ephemera — persisting them would splice
+    // fragments of a session-only conversation into the single-player log.
+    if (!get().networked) void db.saveMessage(msg).catch(() => {});
   },
 
   runCommand(raw) {
@@ -709,10 +812,14 @@ export const useRoom = create<RoomState>((set, get) => ({
           break;
         }
         clearIdle();
-        const msg: Message = { id: uid(), channelId: CHANNEL_ID, author: 'user', text, ts: Date.now() };
+        const msg: Message = { id: uid(), channelId: CHANNEL_ID, author: 'user', text, ts: nextTs() };
         set((s) => ({ messages: [...s.messages, msg] }));
         void db.saveMessage(msg).catch(() => {});
-        if (!get().muted.includes(target.id)) void get().startGeneration(target);
+        // Don't start a second stream for a persona already generating — a
+        // duplicate reservation would corrupt the concurrency accounting.
+        if (!get().muted.includes(target.id) && !get().generating.includes(target.id)) {
+          void get().startGeneration(target);
+        }
         break;
       }
       case 'kick': {

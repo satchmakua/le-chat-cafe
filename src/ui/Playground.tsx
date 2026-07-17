@@ -12,6 +12,7 @@ export function Playground({ onClose }: { onClose: () => void }) {
   const runAB = useRoom((s) => s.runAB);
   const networked = useRoom((s) => s.networked);
   const isHost = useRoom((s) => s.isHost);
+  const connection = useRoom((s) => s.connection);
   const connect = useRoom((s) => s.connect);
   const disconnect = useRoom((s) => s.disconnect);
 
@@ -161,7 +162,8 @@ export function Playground({ onClose }: { onClose: () => void }) {
         {networked ? (
           <>
             <p className={styles.hint}>
-              Connected to "{room}" as {nick} — {isHost ? 'host (you drive the personas)' : 'viewer'}.
+              Connected to "{connection?.room ?? room}" as {connection?.name ?? nick} —{' '}
+              {isHost ? 'host (you drive the personas)' : 'viewer'}.
             </p>
             <button className={styles.btn} onClick={disconnect}>
               disconnect

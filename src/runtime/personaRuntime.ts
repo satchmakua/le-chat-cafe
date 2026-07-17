@@ -18,10 +18,14 @@ export interface PromptOptions {
   notes?: string[];
   /** This persona's affinity toward each target ('user' | personaId), in [-1, 1]. */
   affinities?: Record<string, number>;
+  /** id → display name for non-persona authors (networked humans like "human:2"),
+   *  so prompts never show raw wire ids the model would then parrot in chat. */
+  names?: Record<string, string>;
 }
 
-function displayName(author: string, personas: Persona[]): string {
-  return author === 'user' ? 'user' : (personas.find((p) => p.id === author)?.name ?? author);
+function displayName(author: string, personas: Persona[], names: Record<string, string>): string {
+  if (author === 'user') return 'user';
+  return personas.find((p) => p.id === author)?.name ?? names[author] ?? author;
 }
 
 /** Render messages as a `Name: text` transcript (skips empty/pending lines). */
@@ -29,11 +33,12 @@ export function formatTranscript(
   messages: Message[],
   personas: Persona[],
   window = Number.POSITIVE_INFINITY,
+  names: Record<string, string> = {},
 ): string {
   return messages
     .filter((m) => m.text.trim().length > 0)
     .slice(-window)
-    .map((m) => `${displayName(m.author, personas)}: ${m.text}`)
+    .map((m) => `${displayName(m.author, personas, names)}: ${m.text}`)
     .join('\n');
 }
 
@@ -43,7 +48,7 @@ export function buildPrompt(
   personas: Persona[],
   opts: PromptOptions = {},
 ): ChatTurn[] {
-  const { window = PROMPT_WINDOW, notes = [], affinities = {} } = opts;
+  const { window = PROMPT_WINDOW, notes = [], affinities = {}, names = {} } = opts;
 
   const others = personas.filter((p) => p.id !== persona.id).map((p) => p.name);
   const roster = others.length > 0 ? `${others.join(', ')}, and the user` : 'the user';
@@ -57,7 +62,10 @@ export function buildPrompt(
     const a = affinities[p.id];
     if (a !== undefined && Math.abs(a) >= 0.3) feelings.push(affinityPhrase(a, p.name));
   }
-  const feelingsBlock = feelings.length > 0 ? `\n\nHow you feel right now:\n${feelings.join(' ')}` : '';
+  const feelingsBlock =
+    feelings.length > 0
+      ? `\n\nHow you feel right now (let it color your tone — never state or explain these feelings outright):\n${feelings.join(' ')}`
+      : '';
 
   const memory =
     notes.length > 0 ? `\n\nWhat you remember:\n${notes.map((n) => `- ${n}`).join('\n')}` : '';
@@ -80,7 +88,7 @@ export function buildPrompt(
     memory +
     sentinel;
 
-  const user = `${formatTranscript(history, personas, window)}\n\nRespond as ${persona.name}:`;
+  const user = `${formatTranscript(history, personas, window, names)}\n\nRespond as ${persona.name}:`;
 
   return [
     { role: 'system', content: system },

@@ -14,8 +14,13 @@ export interface ConnectOpts {
 
 export interface Transport {
   connect(opts: ConnectOpts): Promise<void>;
-  send(msg: ClientMsg): void;
+  /** Returns false when the frame was dropped (socket not open) — callers should
+   *  surface that rather than let a message vanish silently. */
+  send(msg: ClientMsg): boolean;
   onMessage(cb: (m: ServerMsg) => void): void;
+  /** Fired once when the connection is terminally gone (user close excluded):
+   *  reconnect attempts exhausted, or closed before ever being welcomed. */
+  onClose(cb: () => void): void;
   isHost(): boolean;
   close(): void;
 }
@@ -23,8 +28,11 @@ export interface Transport {
 /** Single-player: does nothing. Lets the store stay transport-agnostic. */
 export class LocalTransport implements Transport {
   async connect(): Promise<void> {}
-  send(): void {}
+  send(): boolean {
+    return true;
+  }
   onMessage(): void {}
+  onClose(): void {}
   isHost(): boolean {
     return true;
   }
@@ -36,11 +44,16 @@ const MAX_RECONNECTS = 5;
 export class WSTransport implements Transport {
   private ws: WebSocket | null = null;
   private cb: ((m: ServerMsg) => void) | null = null;
+  private closeCb: (() => void) | null = null;
   private opts: ConnectOpts | null = null;
   private you = '';
   private hostId = '';
   private userClosed = false;
   private attempts = 0;
+  /** Reconnects are only attempted after a first successful welcome — a socket
+   *  that never connected must not keep retrying behind the caller's back. */
+  private hadWelcome = false;
+  private terminalFired = false;
 
   connect(opts: ConnectOpts): Promise<void> {
     this.opts = opts;
@@ -70,6 +83,7 @@ export class WSTransport implements Transport {
         if (msg.t === 'welcome') {
           this.you = msg.you;
           this.hostId = msg.hostId;
+          this.hadWelcome = true;
           this.attempts = 0; // a clean welcome resets the backoff
           resolve(); // ready once the relay welcomes us (also fires after a reconnect resync)
         } else if (msg.t === 'presence') {
@@ -85,13 +99,21 @@ export class WSTransport implements Transport {
 
       ws.addEventListener('close', () => {
         if (this.ws === ws) this.ws = null;
-        if (!this.userClosed) this.scheduleReconnect();
+        if (this.userClosed) return;
+        // Never welcomed → the initial connect failed; don't retry in the
+        // background (an orphaned reconnect could later hijack the caller).
+        if (!this.hadWelcome) return;
+        this.scheduleReconnect();
       });
     });
   }
 
   private scheduleReconnect(): void {
-    if (this.userClosed || this.attempts >= MAX_RECONNECTS) return;
+    if (this.userClosed) return;
+    if (this.attempts >= MAX_RECONNECTS) {
+      this.fireTerminal();
+      return;
+    }
     this.attempts += 1;
     setTimeout(
       () => {
@@ -101,12 +123,26 @@ export class WSTransport implements Transport {
     );
   }
 
-  send(msg: ClientMsg): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  private fireTerminal(): void {
+    if (this.terminalFired) return;
+    this.terminalFired = true;
+    this.closeCb?.();
+  }
+
+  send(msg: ClientMsg): boolean {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(msg));
+      return true;
+    }
+    return false;
   }
 
   onMessage(cb: (m: ServerMsg) => void): void {
     this.cb = cb;
+  }
+
+  onClose(cb: () => void): void {
+    this.closeCb = cb;
   }
 
   isHost(): boolean {

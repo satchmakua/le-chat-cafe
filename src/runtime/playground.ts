@@ -25,11 +25,19 @@ export function truncateAfter(
   return { kept: messages.slice(0, i + 1), removed: messages.slice(i + 1) };
 }
 
-/** The most recent persona (non-user, non-empty) message — the regenerate target. */
+/** The most recent persona message — the regenerate target. Skips user, system,
+ *  and remote-human lines, else /regen silently no-ops after a system notice. */
 export function lastPersonaMessage(messages: Message[]): Message | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.author !== 'user' && m.text.trim().length > 0) return m;
+    if (
+      m.author !== 'user' &&
+      m.author !== 'system' &&
+      !m.author.startsWith('human:') &&
+      m.text.trim().length > 0
+    ) {
+      return m;
+    }
   }
   return undefined;
 }

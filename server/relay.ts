@@ -16,6 +16,7 @@ import type { Message } from '../src/core/types';
 interface Member {
   socket: WebSocket;
   participant: Participant;
+  canHost: boolean; // hand-off must only promote clients able to drive personas
 }
 
 interface Room {
@@ -33,9 +34,26 @@ export interface Relay {
   close: () => Promise<void>;
 }
 
+const HEARTBEAT_MS = 30_000;
+
 export function createRelay(opts: { port?: number } = {}): Promise<Relay> {
   const wss = new WebSocketServer({ port: opts.port ?? DEFAULT_RELAY_PORT });
   const rooms = new Map<string, Room>();
+
+  // Liveness: a host that dies without a clean TCP close (sleep, wifi drop) would
+  // otherwise hold hostId forever — ping every socket; terminate ones that miss a
+  // pong, which fires their normal 'close' handler (presence + host hand-off).
+  const alive = new WeakMap<WebSocket, boolean>();
+  const heartbeat = setInterval(() => {
+    for (const socket of wss.clients) {
+      if (alive.get(socket) === false) {
+        socket.terminate();
+        continue;
+      }
+      alive.set(socket, false);
+      socket.ping();
+    }
+  }, HEARTBEAT_MS);
 
   const send = (socket: WebSocket, msg: ServerMsg) => socket.send(JSON.stringify(msg));
 
@@ -58,6 +76,8 @@ export function createRelay(opts: { port?: number } = {}): Promise<Relay> {
 
   wss.on('connection', (socket) => {
     let joined: { room: Room; id: string } | null = null;
+    alive.set(socket, true);
+    socket.on('pong', () => alive.set(socket, true));
 
     socket.on('message', (data) => {
       const msg = parseFrame<ClientMsg>(data.toString());
@@ -67,7 +87,11 @@ export function createRelay(opts: { port?: number } = {}): Promise<Relay> {
         const room = roomOf(msg.room);
         const id = `human:${++humanCounter}`;
         if (room.hostId === null && msg.canHost) room.hostId = id;
-        room.members.set(id, { socket, participant: { id, name: msg.name, kind: 'human' } });
+        room.members.set(id, {
+          socket,
+          participant: { id, name: msg.name, kind: 'human' },
+          canHost: msg.canHost,
+        });
         joined = { room, id };
         send(socket, {
           t: 'welcome',
@@ -103,8 +127,16 @@ export function createRelay(opts: { port?: number } = {}): Promise<Relay> {
       const { room, id } = joined;
       room.members.delete(id);
       if (room.hostId === id) {
-        // Hand host to whoever's left (M6.2 will make clients react); null if empty.
-        room.hostId = room.members.keys().next().value ?? null;
+        // Hand host to the first remaining member that CAN host (a declared
+        // viewer can't drive personas); null if none — a canHost hello later
+        // claims it via the hello branch above.
+        room.hostId = null;
+        for (const [memberId, member] of room.members) {
+          if (member.canHost) {
+            room.hostId = memberId;
+            break;
+          }
+        }
       }
       if (room.members.size === 0) rooms.delete(findRoomName(rooms, room));
       else broadcastPresence(room);
@@ -119,6 +151,7 @@ export function createRelay(opts: { port?: number } = {}): Promise<Relay> {
         port,
         close: () =>
           new Promise<void>((res) => {
+            clearInterval(heartbeat);
             for (const client of wss.clients) client.terminate();
             wss.close(() => res());
           }),

@@ -53,12 +53,18 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Whole-token regex via lookarounds — unlike \b this also works for tokens that
+ *  start/end with a non-word char ("c++", ".net", a name like "*Mira*"). */
+function wholeToken(token: string): RegExp {
+  return new RegExp(`(?<!\\w)${escapeRegExp(token)}(?!\\w)`, 'i');
+}
+
 // --- Pure predicates (exported for testing) ---
 
 /** Whole-word, case-insensitive match of the persona's name or any alias. */
 export function mentionsPersona(text: string, persona: Persona): boolean {
   const names = [persona.name, ...(persona.aliases ?? [])];
-  return names.some((n) => new RegExp(`\\b${escapeRegExp(n)}\\b`, 'i').test(text));
+  return names.some((n) => wholeToken(n).test(text));
 }
 
 /** Heuristic: ends with '?' or opens with a wh-/aux question word. */
@@ -69,9 +75,18 @@ export function isQuestion(text: string): boolean {
 
 /** Any of the persona's interest keywords appears as a whole word. */
 export function matchesInterest(text: string, persona: Persona): boolean {
-  return persona.interests.some((k) =>
-    new RegExp(`\\b${escapeRegExp(k)}\\b`, 'i').test(text),
-  );
+  return persona.interests.some((k) => wholeToken(k).test(text));
+}
+
+/** The message a reaction tick should evaluate: the newest finalized, non-system
+ *  line. `messages.at(-1)` is wrong when a pending placeholder or a system notice
+ *  landed after the reply — mentions inside that reply would be silently lost. */
+export function triggerMessage(messages: Message[]): Message | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m.pending && m.author !== 'system' && m.text.trim().length > 0) return m;
+  }
+  return undefined;
 }
 
 /** How many messages have been appended since this persona last spoke (∞ if never). */
@@ -127,7 +142,7 @@ export function candidateFor(
   if (ctx.trigger === 'idle') {
     reason = 'idle';
   } else {
-    const latest = ctx.messages.at(-1);
+    const latest = triggerMessage(ctx.messages);
     // Never react to your own message (also enforced by cooldown).
     if (latest && latest.author !== persona.id) {
       if (mentionsPersona(latest.text, persona)) reason = 'mention';

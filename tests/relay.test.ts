@@ -137,4 +137,30 @@ describe('relay (two-client integration)', () => {
 
     b.close();
   });
+
+  it('hand-off skips members that declared canHost:false', async () => {
+    relay = await createRelay({ port: 0 });
+    const url = `ws://localhost:${relay.port}`;
+    const ann = await open(url);
+    const annW = next(ann, isWelcome);
+    sendC(ann, { t: 'hello', room: 'h', name: 'Ann', canHost: true });
+    await annW;
+    const bob = await open(url); // a viewer — cannot drive personas
+    const bobW = next(bob, isWelcome);
+    sendC(bob, { t: 'hello', room: 'h', name: 'Bob', canHost: false });
+    await bobW;
+    const cara = await open(url);
+    const caraW = next(cara, isWelcome);
+    sendC(cara, { t: 'hello', room: 'h', name: 'Cara', canHost: true });
+    await caraW;
+
+    // Ann leaves → Bob (earlier joiner, canHost:false) must be skipped; Cara hosts.
+    const promoted = next(cara, (m) => m.t === 'presence' && m.participants.some((p) => p.isHost));
+    ann.close();
+    const pres = (await promoted) as Extract<ServerMsg, { t: 'presence' }>;
+    expect(pres.participants.find((p) => p.isHost)?.name).toBe('Cara');
+
+    bob.close();
+    cara.close();
+  });
 });

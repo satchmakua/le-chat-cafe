@@ -7,7 +7,7 @@ export function MessageList() {
   const messages = useRoom((s) => s.messages);
   const personas = useRoom((s) => s.personas);
   const forkAt = useRoom((s) => s.forkAt);
-  const myId = useRoom((s) => s.myId);
+  const myIds = useRoom((s) => s.myIds);
   const remoteParticipants = useRoom((s) => s.remoteParticipants);
   const participantNames = useRoom((s) => s.participantNames);
   const endRef = useRef<HTMLDivElement>(null);
@@ -26,7 +26,7 @@ export function MessageList() {
             </div>
           );
         }
-        const isMe = m.author === 'user' || (myId !== '' && m.author === myId);
+        const isMe = m.author === 'user' || myIds.includes(m.author);
         const isHuman = isMe || m.author.startsWith('human:');
         const persona = isHuman ? undefined : personas.find((p) => p.id === m.author);
         const name = isMe
