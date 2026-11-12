@@ -18,7 +18,8 @@ export function Playground({ onClose }: { onClose: () => void }) {
 
   const [relayUrl, setRelayUrl] = useState('ws://localhost:8787');
   const [room, setRoom] = useState('cafe');
-  const [nick, setNick] = useState('guest');
+  // Join shared rooms under your /nick when you have one.
+  const [nick, setNick] = useState(() => useRoom.getState().nick || 'guest');
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
 
@@ -126,6 +127,28 @@ export function Playground({ onClose }: { onClose: () => void }) {
           step={5}
           value={config.idleMsMax / 1000}
           onChange={(e) => updateConfig({ idleMsMax: Number(e.target.value) * 1000 })}
+        />
+        <label className={styles.label}>
+          comings &amp; goings: {config.presenceMs > 0 ? `~every ${(config.presenceMs / 1000).toFixed(0)}s` : 'off'}
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={300}
+          step={15}
+          value={config.presenceMs / 1000}
+          onChange={(e) => updateConfig({ presenceMs: Number(e.target.value) * 1000 })}
+        />
+        <label className={styles.label}>
+          persona DMs: {config.dmGapMs > 0 ? `at most every ${(config.dmGapMs / 60_000).toFixed(0)} min` : 'off'}
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={30}
+          step={1}
+          value={config.dmGapMs / 60_000}
+          onChange={(e) => updateConfig({ dmGapMs: Number(e.target.value) * 60_000 })}
         />
         <label className={styles.label}>max concurrent: {config.maxConcurrent}</label>
         <input

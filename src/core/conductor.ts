@@ -26,6 +26,8 @@ export const DEFAULT_CONDUCTOR_CONFIG: ConductorConfig = {
   monologueCap: 3, // of the last MONOLOGUE_WINDOW messages
   chattinessWeight: 15,
   jitterMax: 10,
+  presenceMs: 90_000,
+  dmGapMs: 600_000,
 };
 
 /**
@@ -60,6 +62,12 @@ function wholeToken(token: string): RegExp {
 }
 
 // --- Pure predicates (exported for testing) ---
+
+/** Whole-token, case-insensitive containment — also used to highlight lines that
+ *  mention your nick (DESIGN §12.1). */
+export function containsToken(text: string, token: string): boolean {
+  return token.trim().length > 0 && wholeToken(token.trim()).test(text);
+}
 
 /** Whole-word, case-insensitive match of the persona's name or any alias. */
 export function mentionsPersona(text: string, persona: Persona): boolean {
@@ -102,8 +110,9 @@ export function cooldownTurns(persona: Persona): number {
   return Math.round(2 + (1 - persona.temperament.talkativeness) * 4);
 }
 
-function onCooldown(messages: Message[], persona: Persona): boolean {
-  return messagesSinceLastSpoke(messages, persona.id) < cooldownTurns(persona);
+/** `relaxed` drops the cooldown to its floor: only "you were the last to speak". */
+function onCooldown(messages: Message[], persona: Persona, relaxed = false): boolean {
+  return messagesSinceLastSpoke(messages, persona.id) < (relaxed ? 1 : cooldownTurns(persona));
 }
 
 /** Count this persona's messages within the recent window. */
@@ -161,6 +170,29 @@ export function candidateFor(
   return { personaId: persona.id, reason, score };
 }
 
+/** Authors that are people at a keyboard: you, or a networked human ("human:2"). */
+export function isHumanAuthor(author: string): boolean {
+  return author === 'user' || author.startsWith('human:');
+}
+
+function collectCandidates(ctx: SelectContext, rng: () => number, relaxed: boolean): TurnCandidate[] {
+  // A human naming a persona always gets an answer: cooldown and the monologue cap
+  // exist to stop personas ping-ponging, not to make them ignore you.
+  const latest = ctx.trigger === 'message' ? triggerMessage(ctx.messages) : undefined;
+  const humanLine = latest && isHumanAuthor(latest.author) ? latest : undefined;
+  const candidates: TurnCandidate[] = [];
+  for (const persona of ctx.personas) {
+    if (ctx.generating.has(persona.id)) continue;
+    const addressed = !!humanLine && mentionsPersona(humanLine.text, persona);
+    if (!addressed && onCooldown(ctx.messages, persona, relaxed)) continue;
+    if (!addressed && monologuing(ctx.messages, persona.id, ctx.config)) continue;
+
+    const candidate = candidateFor(persona, ctx, rng);
+    if (candidate && candidate.score >= ctx.config.minScore) candidates.push(candidate);
+  }
+  return candidates;
+}
+
 /**
  * Decide who speaks this tick (§4.4): generate + score candidates, drop those
  * on cooldown / monologuing / below minScore, sort by score, and return up to
@@ -171,14 +203,14 @@ export function selectSpeakers(ctx: SelectContext): TurnCandidate[] {
   const slots = ctx.config.maxConcurrent - ctx.generating.size;
   if (slots <= 0) return [];
 
-  const candidates: TurnCandidate[] = [];
-  for (const persona of ctx.personas) {
-    if (ctx.generating.has(persona.id)) continue;
-    if (onCooldown(ctx.messages, persona)) continue;
-    if (monologuing(ctx.messages, persona.id, ctx.config)) continue;
-
-    const candidate = candidateFor(persona, ctx, rng);
-    if (candidate && candidate.score >= ctx.config.minScore) candidates.push(candidate);
+  let candidates = collectCandidates(ctx, rng, false);
+  // Cooldowns must never silence a whole room. They're counted in turns, and a small
+  // channel (#library has two people, #arcade three) runs out of rested speakers within
+  // one round — then nobody could talk until a human did. So on an idle tick where
+  // everyone is cooling down, the floor drops to "not whoever spoke last". Reactions
+  // to a message keep the full cooldown, which is what stops ping-pong.
+  if (candidates.length === 0 && ctx.trigger === 'idle') {
+    candidates = collectCandidates(ctx, rng, true);
   }
 
   candidates.sort((a, b) => b.score - a.score);

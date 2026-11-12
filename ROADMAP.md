@@ -2,10 +2,9 @@
 
 The milestone checklist.
 
-> **✅ Entire roadmap complete (M0–M5 + M6.0–M6.2).** v1 confirmed 2026-06-28;
-> multiplayer (M6) confirmed 2026-07-17 by a two-browser-tab test — host/viewer
-> presence, cross-tab human messages, host-authoritative personas, live wire
-> streaming, and host hand-off all verified. No scheduled work remains.
+> **Phases 0–3 complete (M0–M6.2).** v1 confirmed 2026-06-28; multiplayer (M6)
+> confirmed 2026-07-17 by a two-browser-tab test. **Phase 4 — a living world (M7–M11)
+> is in progress.**
 
 **Rules of the road:**
 - Each milestone is an **independently runnable** slice — something actually testable
@@ -96,8 +95,46 @@ spec in [DESIGN.md §11](DESIGN.md).
   **Test:** persona replies stream live in the joiner's tab; kill/restart a tab → it
   resyncs; close the host tab → another client picks up hosting.
 
-<!-- Post-v1 (documented, not scheduled): real multiplayer via a thin Node + WebSocket
-     relay — a second human is just another participant id (DESIGN §11). -->
+## Phase 4 — A living world
+
+What still breaks the illusion, in order: nobody knows your name, the room never
+breathes, what the personas remember is invisible, and there's only one room. Full
+spec in [DESIGN.md §12](DESIGN.md).
+
+- [x] **M7 — Your name.** `/nick <name>` (persisted); prompts label your lines and the
+  roster with it so personas address you by name; persona lines that mention you are
+  highlighted. _(DESIGN §12.1)_
+  **Test:** `/nick Satchel` → your lines show `Satchel` and a notice confirms it; talk
+  to the room → a persona addresses you by name and that line is highlighted; reload →
+  the nick is still set; `/nick` with a persona's name is refused.
+
+- [x] **M8 — Personas come and go.** Log-derived presence, sociability-weighted
+  departures/arrivals on a jittered timer, IRC quit messages, arrival greetings;
+  `/kick` and `/invite` become real departures/arrivals. _(DESIGN §12.2)_
+  **Test:** set "comings & goings" to ~15 s in ⚙ and wait → `* X has quit (…) *`
+  and `* Y has joined #cafe *` lines appear, away personas are dimmed and silent,
+  arrivals say hi, and at least two personas are always present; `/kick Dex` → he
+  leaves and stays gone; `/invite Dex` → he joins and greets; reload → presence holds.
+
+- [x] **M9 — Profiles.** Clickable nicks and `/whois <nick>` open a profile card: bio,
+  status, interests, model, feelings toward you and the others, and what they
+  remember. _(DESIGN §12.3)_
+  **Test:** click Mira → her card shows bio, status, how she feels about you, what she
+  remembers, and her strongest feelings about the others; `/whois Dex` opens his;
+  Esc closes it; nothing is added to the chat log.
+
+- [ ] **M10 — Channels & DMs.** `#cafe` / `#arcade` / `#library` with per-channel logs,
+  topics, and members; `/join` `/part` `/list` `/query`; private `/msg`; personas who
+  like you occasionally DM you first. _(DESIGN §12.4)_
+  **Test:** `/join #arcade` → only the arcade crowd is there and they talk there;
+  switch back → #cafe's history is intact; `/msg Mira hi` → a private `@Mira` window
+  opens and only she answers; reload → channels, DMs, and topics persist.
+
+- [ ] **M11 — Retro polish.** Synthesized sounds (with a toggle), `/export` to a `.log`,
+  unread counts in the tab title. _(DESIGN §12.5)_
+  **Test:** a persona arrives → a door sound plays (toggle it off in the header →
+  silence); `/export` downloads a readable `.log` of the current channel; hide the tab
+  while a DM arrives → its title shows `(1)`.
 
 ---
 

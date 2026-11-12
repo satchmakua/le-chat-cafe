@@ -200,6 +200,16 @@ Each tick:
 **3**) of the last 5 messages, it is excluded from candidacy this tick regardless of
 score. Prevents two chatty personas from locking out the room.
 
+**Two exceptions, both from live runs (Phase 4):**
+- **A human naming you always gets an answer.** A mention in a human's message skips
+  the cooldown and the monologue cap. Both rules exist to stop personas
+  ping-ponging, not to make one ignore the person who just addressed it.
+  Persona-to-persona mentions keep both.
+- **Cooldowns never silence a whole room.** They're counted in turns, so a small
+  channel (#library has two people) runs out of rested speakers within one round,
+  and the room stalled until a human spoke. On an idle tick where everyone is cooling
+  down, the floor drops to "not whoever spoke last".
+
 ### 4.5 Tunable constants (one place)
 
 ```ts
@@ -334,6 +344,11 @@ To stay inside a local model's context window:
   every 30 messages), a cheap summarization pass distills older turns into per-persona
   bullet notes ("user is a dad to Atlas; dislikes spoilers"), re-injected into that
   persona's system prompt. Smart-lossy social memory.
+- Notes are about **other people, you above all** (by your nick). Asking for "facts
+  about the people and topics" got the persona's own doings back in third person
+  ("Mira has recently returned from a countryside trip"), so the prompt names whose
+  memory it is and asks only about the others. Notes that still open with the
+  persona's own name, or with "I"/"my", are dropped.
 
 ```ts
 interface PersonaMemory {
@@ -509,6 +524,24 @@ the default and is unaffected.
   stray `§aff` defensively before render.
 - **Small-model repetition.** Local models loop. → anti-repetition guidance in the
   system prompt, rotate speakers via the Conductor, modest `top_p`/temperature.
+  Prompt guidance alone proved not enough in live runs, so every finished reply also
+  passes mechanical **turn guards** (`src/runtime/repetition.ts`). Each failure below
+  was seen live and is a test fixture:
+  - **Cut at the next speaker.** Small models keep writing in transcript format: a
+    reply runs on into a fake `(system)` line, a fake `* Mira has quit *`, or a
+    `Caius:` turn. The reply ends at the first such line (a first-line `Mira: …`
+    stays, since that is IRC addressing).
+  - **Drop the turn when it echoes** a recent line of its own or a clause of the
+    character prompt, **recites** a distinctive 4-word run of injected text
+    (character, rules, feelings, sentinel; memory is excluded because quoting what
+    they remember is the point), or **breaks character** ("as an AI…", "I'm not
+    really Dex"). A dropped persona sits out 30 s. A beat of silence reads better than
+    a stuck record.
+  - **Keep machinery out of prompts.** Room events (arrivals, departures, `/me`,
+    `/topic`, nick changes) appear in the transcript as bracketed narration
+    (`[Mira has joined #cafe]`), not as a `system:` speaker the model would imitate.
+    UI notices (command output, errors, the welcome) are flagged `notice` and never
+    reach a prompt at all.
 - **"All NPCs sound the same."** → distinct temperament + prompts + tiered models, and
   the §6.8 eval harness to *measure* it rather than hope.
 - **Open question — model tags.** Exact best small models shift monthly; verify at
@@ -607,3 +640,118 @@ interface Transport {
 **Risks:** host leaves → room loses personas (M6.2 hand-off); no auth/rooms-are-public
 (acceptable for LAN/co-op use — document it, don't add accounts); WS over the open
 internet needs TLS + a deploy story (out of scope; this targets LAN / tunnel use).
+
+---
+
+## 12. Phase 4 — a living world (M7–M11)
+
+The core loop works. Phase 4 goes after what still breaks the illusion, in the order
+it matters to the North star: nobody knows your name, the room never breathes, what
+the personas remember is invisible, and there is only one room.
+
+### 12.1 Your name (M7)
+
+- `/nick <name>` sets your display name (persisted; 1–20 chars of letters, digits,
+  `_` or `-`; can't collide with a persona). Prompts label your lines with it and the
+  roster names you ("…Dex, and Satchel"), so personas address you by name.
+- The affinity sentinel keeps the stable key `"user"`; a model that writes your nick
+  as the key is mapped back to it.
+- Persona lines that mention your nick are highlighted, IRC-style.
+- No nick set → the old behaviour ("you" in the UI, "the user" in prompts). While
+  connected to a relay the connect nick is your name and `/nick` is refused (the relay
+  has no rename).
+
+### 12.2 Presence — personas come and go (M8)
+
+- **Presence is derived from the log.** A presence event is an ordinary system message
+  carrying `presence: { who, state }`; the latest event per persona wins and no event
+  means online. Because it rides the message log, persistence and multiplayer sync come
+  free: the host broadcasts presence lines like any other, and viewers derive the same
+  state from them. No new wire types, no relay change.
+- A presence timer (mean `presenceMs`, default 90 s, jittered; `0` disables) now and
+  then sends one persona away or brings one back, weighted by a new
+  `temperament.sociability` (0..1). Invariants: never fewer than two personas online;
+  a kicked (muted) persona never returns on its own; a persona mid-reply never leaves.
+- Departures use canned, persona-flavoured IRC quit messages
+  (`* Dex has quit (Ping timeout: 240 seconds) *`) — no model call. Arrivals post
+  `* Mira has joined #cafe *` and the newcomer greets the room through a one-off
+  prompt directive.
+- `/kick` becomes a real departure ("kicked by Satchel") and `/invite` a real arrival
+  with a greeting. Away personas are dimmed in the nick list and never picked by the
+  Conductor.
+- Accepted: a late joiner's 200-message relay snapshot can predate a departure, so a
+  long-gone persona may briefly look online for them.
+
+```ts
+interface Message { /* … */ presence?: { who: string; state: 'join' | 'leave' } }
+function presenceState(messages: Message[], ids: string[]): Record<string, 'online' | 'away'>;
+function planPresenceChange(
+  personas: Persona[], online: Set<string>, blocked: Set<string>, rng: () => number,
+  minOnline?: number,   // 2
+): { who: string; state: 'join' | 'leave' } | null;
+```
+
+### 12.3 Profiles — `/whois` (M9)
+
+- Click a nick (or `/whois <nick>`) for a profile card: bio, status, interests, model,
+  **how they feel about you** (label + meter), **what they remember** (their
+  long-term notes), and their strongest feelings about the others. It is a read-out of
+  state the friendship sim already keeps; no model call.
+- Personas gain a one-line `bio`.
+- The card is UI-only — nothing is written to the log, so it never leaks into prompts.
+
+### 12.4 Channels & DMs (M10)
+
+- Channels are data (`src/channels/*.json`: id, name, default topic) and personas list
+  where they hang out (`channels` in their JSON, default `["cafe"]`). Shipping:
+  `#cafe` (everyone), `#arcade` (the games crowd), `#library` (quiet and bookish).
+- Messages already carry `channelId`; the log view, topic, and summarization cursor
+  become per-channel. **Only the active channel runs the Conductor** — one local GPU
+  can't keep three rooms talking, and a room you aren't in doesn't need to.
+- DMs are private channels `dm:<personaId>` with one persona who answers every message
+  you send — `/query <nick>`, the DM button on a profile, or `/msg <nick> <text>`, which
+  is now private, as in IRC. Affinity is shared: a good DM warms them in public too.
+- A persona who likes you (affinity ≥ 0.4) occasionally DMs you first while you're
+  elsewhere — rare (≥ 10 min apart), only when the active room is idle — and the
+  channel list shows an unread badge. This is the one deliberate exception to "only the
+  active channel talks".
+- New commands: `/join #name`, `/part`, `/list`, `/query <nick>`.
+- Multiplayer stays one shared room: while connected, the channel pane shows only the
+  relay room, and DMs are unavailable.
+
+**As built (M10):**
+
+- A channel file is `{ id, topic, about }`. `about` goes into the prompt header
+  ("chatting in #arcade (the games corner: …) with Dex, Juno, and Satchel"), so each
+  room pulls talk toward its own subject. The crowds: `#arcade` is Caius, Dex, and Juno
+  (all into games); `#library` is Mira and Dex (books, sci-fi). Everyone is in `#cafe`.
+- The store keeps `messages` as **the active channel's log**, so the Conductor,
+  presence, regen/fork, and the log view work unchanged; other channels sit in a
+  stash. A turn is bound to the channel it started in: a reply that finishes after you
+  switch away lands in its own log and bumps that channel's unread badge.
+- You *join* channels: the pane lists home plus what you've `/join`ed, then your DMs.
+  The first `/join` posts "Satchel joined #arcade" as a room event the crowd can greet;
+  after that, clicking a channel just switches windows. `/part` leaves (home can't be
+  parted); in a DM it closes the window, and the history comes back if you reopen it.
+- Presence, `/who`, `/kick`, and `/invite` are per channel, over that channel's crowd.
+  A kick still mutes the persona everywhere, but a DM still reaches them, since that
+  window is yours.
+- A DM persona answers whatever you leave unanswered and never chatters on its own;
+  the idle timer doubles as the retry when a turn guard drops their reply.
+- Memory is per persona but learned per channel: a channel's summary pass runs only for
+  the personas who hang out there, so Mira never "remembers" #arcade.
+- Persona-initiated DMs run off the idle timer: when the room you're in is quiet (nothing
+  generating), at least `dmGapMs` since the last one (default 10 min; also measured from
+  page load, so the first never fires the moment you arrive), a 25% draw among
+  personas at affinity ≥ 0.4, weighted by warmth. The Playground slider "persona DMs"
+  tunes the gap (0 = off).
+- Connecting to a relay first switches you home, so the channel you were in is
+  stashed intact; disconnecting restores home's persisted log.
+
+### 12.5 Retro polish (M11)
+
+- Synthesized AIM-style sounds via Web Audio (no audio assets): a door opening on
+  arrivals, closing on departures, and a soft chime when you're mentioned or DM'd.
+  Header toggle, remembered per browser.
+- `/export` downloads the active channel as a plain IRC-style `.log`.
+- A hidden tab shows unread counts in its title — `(3) le-chat-cafe`.

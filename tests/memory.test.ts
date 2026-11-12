@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSummaryPrompt,
+  keepNotesAboutOthers,
   mergeNotes,
   olderThanWindow,
   parseNotes,
@@ -52,6 +53,31 @@ describe('memory helpers', () => {
     const prompt = buildSummaryPrompt(persona, 'user: hi');
     expect(prompt).toContain('Caius');
     expect(prompt).toContain('user: hi');
+  });
+
+  it('buildSummaryPrompt asks about the other people — you first, by nick', () => {
+    const prompt = buildSummaryPrompt(persona, 'Satchel: i just moved to Lisbon', 'Satchel');
+    expect(prompt).toContain('OTHER people');
+    expect(prompt).toContain('above all Satchel');
+    expect(prompt).toContain('someone other than Caius');
+  });
+
+  it('keepNotesAboutOthers drops self-notes (live regression) and first-person lines', () => {
+    const mira: Persona = { ...persona, id: 'mira', name: 'Mira', aliases: ['mir'] };
+    const notes = [
+      'Mira has recently returned from a countryside trip', // the note that prompted this
+      "Mira's book club meets on Fridays",
+      'mir is reading Middlemarch',
+      'I love talking about novels',
+      'Satchel just moved to Lisbon for a new job',
+      'Dex is rewriting his window manager in Zig',
+      'Into the woods is Juno’s favorite musical', // "Into" must not read as "I"
+    ];
+    expect(keepNotesAboutOthers(notes, mira)).toEqual([
+      'Satchel just moved to Lisbon for a new job',
+      'Dex is rewriting his window manager in Zig',
+      'Into the woods is Juno’s favorite musical',
+    ]);
   });
 
   it('summarizeForPersona returns parsed notes via the provider port', async () => {

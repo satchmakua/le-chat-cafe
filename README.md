@@ -6,15 +6,17 @@
 
 You walk into a room. A nick list runs down the side: you, and a handful of
 LLM-driven personas — each with its own name, color, voice, and moods. They talk to
-you, they talk to *each other*, and (later milestones) they remember how they feel
-about you across sessions. Lurk, jump in, or open the playground and tune the room
-like an instrument.
+you, they talk to *each other*, they come and go, and they remember you and how they
+feel about you across sessions. Wander between channels, slip into a private chat, or
+open the playground and tune the room like an instrument.
 
-**Status:** _full roadmap built (M0–M5 + multiplayer M6)_ — a persistent multi-persona
-room with the Conductor, a friendship sim, a power-user playground, CRT/AIM themes,
-`/commands`, a persona-distinctness eval, and an opt-in WebSocket relay (host-driven
-personas, live streaming, reconnection) so other humans can join. See
-[ROADMAP.md](ROADMAP.md) for the plan.
+**Status:** _Phases 0–3 done (M0–M6.2); Phase 4, "a living world", is in progress
+(M7–M10 done, M11 next)._ A persistent multi-persona room with the Conductor, a
+friendship sim, a power-user playground, CRT/AIM themes, `/commands`, a
+persona-distinctness eval, and an opt-in WebSocket relay so other humans can join. Plus
+your own nick, personas who drift in and out, profile cards showing what each one
+remembers, and `#cafe` / `#arcade` / `#library` with their own crowds and private DMs.
+See [ROADMAP.md](ROADMAP.md) for the plan.
 
 ---
 
@@ -52,8 +54,25 @@ Type a message and the room responds — personas reply to you and to each other
 streaming token-by-token. Leave it idle and someone breaks the silence.
 
 **In the room:** toggle the CRT ↔ AIM theme and open the ⚙ playground from the header.
-Type `/help` for chat commands (`/who`, `/msg`, `/kick`, `/invite`, `/topic`, `/me`,
-`/regen`, `/fork`). Hover a message and click ⑂ to rewind the timeline.
+Hover a message and click ⑂ to rewind the timeline. Click any nick for their profile
+card: bio, how they feel about you, what they remember (hover a memory and click ✕ to
+make them forget it), and a **message** button for a private chat. Type `/help` for
+the full list of commands:
+
+| Chat command | What it does |
+|---|---|
+| `/nick <name>` | Pick your name (the personas use it) |
+| `/join #arcade` · `/part` · `/list` | Move between channels; each has its own crowd |
+| `/query <nick>` · `/msg <nick> <text>` | Private chat with one persona |
+| `/who` · `/whois <nick>` | Who's here · open someone's profile card |
+| `/kick <nick>` · `/invite <nick>` | Send a persona away · bring them back |
+| `/forget <nick>` | Clear everything a persona remembers |
+| `/topic <text>` · `/me <action>` | Steer the room · narrate an action |
+| `/regen` · `/fork` | Redo the last persona line · rewind to your last message |
+
+Personas who like you sometimes message you first while you're in another channel;
+the channel pane shows an unread badge. Tune that, and how often personas come and go,
+in the ⚙ playground.
 
 ### Commands
 
@@ -74,7 +93,7 @@ real time. The **first** tab to connect becomes the **host** — it drives the p
 (have Ollama there) and broadcasts their turns to everyone; other tabs are viewers. It's
 fully opt-in — without the relay the app is single-player as above. Persona turns stream
 live to viewers, clients auto-reconnect if the relay blips, and host duties hand off if
-the host leaves.
+the host leaves. A shared room is one channel: channels and DMs are single-player only.
 
 ---
 

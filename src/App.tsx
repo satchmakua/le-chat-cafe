@@ -3,7 +3,11 @@ import { MessageList } from './ui/MessageList';
 import { NickList } from './ui/NickList';
 import { Composer } from './ui/Composer';
 import { Playground } from './ui/Playground';
+import { ProfileCard } from './ui/ProfileCard';
+import { ChannelList } from './ui/ChannelList';
 import { useRoom } from './state/store';
+import { channelLabel, isDm } from './core/channels';
+import { channels } from './channels';
 import styles from './App.module.css';
 
 type Theme = 'crt' | 'aim';
@@ -11,7 +15,14 @@ type Theme = 'crt' | 'aim';
 export function App() {
   const init = useRoom((s) => s.init);
   const providerKind = useRoom((s) => s.providerKind);
-  const topic = useRoom((s) => s.topic);
+  const channel = useRoom((s) => s.channel);
+  const personas = useRoom((s) => s.personas);
+  // A DM has no topic; a channel shows its /topic, else the default from its JSON.
+  const topic = useRoom((s) =>
+    isDm(s.channel)
+      ? 'private chat'
+      : s.topics[s.channel] || (channels.find((c) => c.id === s.channel)?.topic ?? ''),
+  );
   const [showPlayground, setShowPlayground] = useState(false);
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem('theme') as Theme | null) ?? 'crt',
@@ -30,14 +41,15 @@ export function App() {
     <div className={styles.app}>
       <nav className={styles.channels}>
         <div className={styles.logo}>le-chat-cafe</div>
-        <ul>
-          <li className={styles.active}># cafe</li>
-        </ul>
+        <ChannelList />
       </nav>
 
       <main className={styles.main}>
         <header className={styles.topic}>
-          <span># cafe{topic ? ` — ${topic}` : ' — late-night chat'}</span>
+          <span>
+            {channelLabel(channel, personas)}
+            {topic ? ` — ${topic}` : ''}
+          </span>
           <span className={styles.headRight}>
             <button
               className={styles.gear}
@@ -73,6 +85,7 @@ export function App() {
       <NickList />
 
       {showPlayground && <Playground onClose={() => setShowPlayground(false)} />}
+      <ProfileCard />
     </div>
   );
 }

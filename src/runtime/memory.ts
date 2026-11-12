@@ -47,13 +47,31 @@ export function mergeNotes(existing: string[], incoming: string[], max = MAX_NOT
   return [...existing, ...incoming].slice(-max);
 }
 
-export function buildSummaryPrompt(persona: Persona, transcript: string): string {
+/**
+ * A persona's memory is of *other people* — above all you. The first version asked for
+ * "facts about the people and topics", and models dutifully wrote the persona's own
+ * deeds in third person ("Mira has recently returned from a countryside trip") with
+ * nothing about you at all.
+ */
+export function buildSummaryPrompt(persona: Persona, transcript: string, you = 'the user'): string {
   return (
-    `You keep private memory notes for "${persona.name}", a character in a group chat.\n\n` +
-    `Transcript to digest:\n${transcript}\n\n` +
-    `List up to 3 short, durable facts worth remembering about the people and topics — ` +
-    `not small talk. One per line, each starting with "- ". Notes:`
+    `You are ${persona.name}'s memory. Read this group-chat transcript and write down what ` +
+    `${persona.name} would want to remember about the OTHER people in it — above all ` +
+    `${you}: what they shared about their life, work, plans, tastes, and moods.\n\n` +
+    `Transcript:\n${transcript}\n\n` +
+    `Write up to 3 short, durable facts. Each one is about someone other than ` +
+    `${persona.name}, names them, and is worth recalling days later. Skip greetings and ` +
+    `small talk. One per line, each starting with "- ". Notes:`
   );
+}
+
+/** Drop notes about the persona itself (or written as "I…") — its memory is of others. */
+export function keepNotesAboutOthers(notes: string[], persona: Persona): string[] {
+  const self = new Set([persona.name, ...(persona.aliases ?? [])].map((n) => n.toLowerCase()));
+  return notes.filter((n) => {
+    const first = n.trim().split(/[\s,:'’]+/)[0]?.toLowerCase() ?? '';
+    return !self.has(first) && !/^(?:i|i'm|i've|i'd|my|me)\b/i.test(n.trim());
+  });
 }
 
 export async function summarizeForPersona(
@@ -61,10 +79,11 @@ export async function summarizeForPersona(
   persona: Persona,
   transcript: string,
   model = persona.model, // caller may pass a resolved/installed tag
+  you = 'the user', // your nick, when set
 ): Promise<string[]> {
   const raw = await provider.generate({
     model,
-    prompt: buildSummaryPrompt(persona, transcript),
+    prompt: buildSummaryPrompt(persona, transcript, you),
   });
-  return parseNotes(raw);
+  return keepNotesAboutOthers(parseNotes(raw), persona);
 }

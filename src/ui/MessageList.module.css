@@ -10,6 +10,14 @@
   word-break: break-word;
 }
 
+/* A line that says your nick — the classic IRC highlight. */
+.mention {
+  background: color-mix(in srgb, var(--user-color) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--user-color);
+  padding-left: 6px;
+  margin-left: -6px;
+}
+
 .fork {
   visibility: hidden;
   margin-left: 6px;
@@ -35,6 +43,14 @@
 
 .nick {
   font-weight: bold;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover {
+  text-decoration: underline;
 }
 
 .text {

@@ -58,6 +58,28 @@ describe('stripAffinity', () => {
     expect(stripAffinity('gibberish §aff not-json trailing').clean).toBe('gibberish');
     expect(stripAffinity('hello §aff {"user"').clean).toBe('hello');
   });
+
+  it('catches the sentinel with "aff" missing (live leak from a 1.5B model)', () => {
+    const a = stripAffinity('§{"user": 0.15}');
+    expect(a.clean).toBe('');
+    expect(a.deltas).toEqual({ user: 0.15 });
+
+    const b = stripAffinity('[Dex] §{"user": -0.2}  ');
+    expect(b.clean).toBe('[Dex]'); // the label is stripNamePrefix's job
+    expect(b.deltas).toEqual({ user: -0.2 });
+
+    expect(stripAffinity('fair §{"user": 0.05}§').clean).toBe('fair');
+    expect(stripAffinity('so § whatever').clean).toBe('so'); // any § is machine markup
+  });
+
+  it('catches a bare affinity object on its own last line, with no § at all', () => {
+    const a = stripAffinity('nice one\n{"user": 0.1, "mira": -.05}');
+    expect(a.clean).toBe('nice one');
+    expect(a.deltas).toEqual({ user: 0.1, mira: -0.05 });
+    expect(stripAffinity('aff {"user": 0.1}').clean).toBe('');
+    // Braces in ordinary chat stay.
+    expect(stripAffinity('my config is {"theme": "dark"}').clean).toBe('my config is {"theme": "dark"}');
+  });
 });
 
 describe('visibleText', () => {
@@ -71,6 +93,12 @@ describe('visibleText', () => {
     expect(visibleText('hello there §a')).toBe('hello there');
     expect(visibleText('hello there §af')).toBe('hello there');
     expect(visibleText('hello there §aff')).toBe('hello there');
+  });
+
+  it('holds back an aff-less sentinel or a bare affinity line while it streams', () => {
+    expect(visibleText('hi §{"us')).toBe('hi');
+    expect(visibleText('hi\n{"user": 0.')).toBe('hi');
+    expect(visibleText('hi\n{')).toBe('hi');
   });
 });
 
@@ -114,5 +142,11 @@ describe('resolveTarget', () => {
     expect(resolveTarget('Mira', personas)).toBe('mira'); // by name
     expect(resolveTarget('caius', personas)).toBe('caius'); // by id
     expect(resolveTarget('ghost', personas)).toBeNull();
+  });
+
+  it('maps your nick back to the stable "user" key', () => {
+    expect(resolveTarget('Satchel', personas, ['Satchel'])).toBe('user');
+    expect(resolveTarget('satchel', personas, ['Satchel'])).toBe('user');
+    expect(resolveTarget('Satchel', personas)).toBeNull(); // no nick → unknown key
   });
 });

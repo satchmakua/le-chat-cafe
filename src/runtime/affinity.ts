@@ -13,12 +13,22 @@ import type { Persona } from '../core/types';
 export const MAX_DELTA = 0.15;
 export const DECAY_FACTOR = 0.98;
 export const SENTINEL_MARKER = '§aff';
+/** `§` never turns up in casual chat, so any `§` starts machine markup. Small models
+ *  drop the "aff" (`§{"user": 0.15}` leaked live), so the bare sign is the backstop. */
+const MARK = '§';
 
-// Global so we can collect/strip every sentinel in the text, not just one.
-const SENTINEL = /\s*§aff\s*(\{[\s\S]*?\})\s*§/g;
+// Global so we can collect/strip every sentinel in the text, not just one. "aff" is
+// optional: the malformed `§{…}§` carries the same deltas.
+const SENTINEL = /\s*§\s*(?:aff)?\s*(\{[\s\S]*?\})\s*§/g;
+// No § at all: an affinity object alone on the last line (`{"user": 0.1}`).
+const NUM = String.raw`-?(?:\d+\.?\d*|\.\d+)`;
+const PAIR = String.raw`"[^"\n]+"\s*:\s*${NUM}`;
+const BARE_TAIL = new RegExp(String.raw`(?:^|\n)\s*(?:aff\s*)?(\{\s*${PAIR}(?:\s*,\s*${PAIR})*\s*\}?)\s*$`);
 
 function collectDeltas(json: string, deltas: Record<string, number>): void {
-  const obj = JSON.parse(json) as Record<string, unknown>;
+  // Models write ".05" / "-.05", which JSON rejects — give the number its leading 0.
+  const fixed = json.replace(/([:\s,]-?)\.(\d)/g, (_, pre: string, digit: string) => `${pre}0.${digit}`);
+  const obj = JSON.parse(fixed) as Record<string, unknown>;
   for (const [key, value] of Object.entries(obj)) {
     if (typeof value === 'number' && Number.isFinite(value)) deltas[key] = value;
   }
@@ -47,39 +57,47 @@ export function stripAffinity(text: string): { clean: string; deltas: Record<str
   }
   let clean = text.replace(SENTINEL, '');
 
-  // 2) Unterminated trailing sentinel (no closing §): salvage deltas if possible.
-  const tail = /\s*§aff\s*(\{[\s\S]*)$/.exec(clean);
-  if (tail) {
-    const candidate = tail[1].trim();
+  // 2) Unterminated trailing sentinel (no closing §), with or without "aff":
+  //    salvage deltas if possible.
+  const salvage = (json: string) => {
+    const candidate = json.trim();
     for (const attempt of [candidate, `${candidate}}`]) {
       try {
         collectDeltas(attempt, deltas);
-        break;
+        return;
       } catch {
         /* keep trying */
       }
     }
+  };
+  const tail = /\s*§\s*(?:aff)?\s*(\{[\s\S]*)$/.exec(clean);
+  if (tail) {
+    salvage(tail[1]);
     clean = clean.slice(0, tail.index);
   }
 
-  // 3) Partial marker remnant ("§", "§a", "§af", "§aff") at the end.
-  clean = clean.replace(/§(?:a(?:f{1,2})?)?\s*$/, '');
+  // 3) No § at all: a bare affinity object alone on the last line.
+  const bare = BARE_TAIL.exec(clean);
+  if (bare) {
+    salvage(bare[1]);
+    clean = clean.slice(0, bare.index);
+  }
 
-  // 4) Absolute backstop: never let the marker through.
-  const stray = clean.indexOf(SENTINEL_MARKER);
+  // 4) Absolute backstop: nothing from a § onward ever reaches the log.
+  const stray = clean.indexOf(MARK);
   if (stray >= 0) clean = clean.slice(0, stray);
 
   return { clean: clean.trimEnd(), deltas };
 }
 
-/** What to show mid-stream: everything before the sentinel marker appears, so it
- *  never flashes on screen while tokens stream in. Also trims a *partial* marker
- *  at the end of the buffer ("§", "§a", "§af") — streaming can split the marker
- *  across tokens, and even a flash of machine chars violates the no-leak rule. */
+/** What to show mid-stream: everything before the first `§`, so a sentinel never
+ *  flashes on screen while tokens stream in (streaming can split it across tokens,
+ *  and even a flash of machine chars breaks the no-leak rule). A trailing line that
+ *  opens a bare `{"…` object is held back too, until finalize decides what it is. */
 export function visibleText(raw: string): string {
-  const i = raw.indexOf(SENTINEL_MARKER);
-  const shown = i >= 0 ? raw.slice(0, i) : raw.replace(/§(?:a(?:f{1,2})?)?$/, '');
-  return shown.trimEnd();
+  const i = raw.indexOf(MARK);
+  const shown = i >= 0 ? raw.slice(0, i) : raw;
+  return shown.replace(/(?:^|\n)\s*(?:aff\s*)?\{"?[^\n]*$/, '').trimEnd();
 }
 
 export function clampDelta(delta: number, max = MAX_DELTA): number {
@@ -111,9 +129,14 @@ export function affinityPhrase(affinity: number, name: string): string {
 }
 
 /** Resolve a sentinel key to 'user' or a known persona id (by id or name). */
-export function resolveTarget(key: string, personas: Persona[]): string | null {
+export function resolveTarget(
+  key: string,
+  personas: Persona[],
+  /** Other names that mean "user" — your nick, which models often write as the key. */
+  userAliases: string[] = [],
+): string | null {
   const k = key.trim().toLowerCase();
-  if (k === 'user') return 'user';
+  if (k === 'user' || userAliases.some((a) => a.trim().toLowerCase() === k)) return 'user';
   const match = personas.find((p) => p.id.toLowerCase() === k || p.name.toLowerCase() === k);
   return match ? match.id : null;
 }

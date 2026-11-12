@@ -5,6 +5,7 @@ import {
   candidateFor,
   cooldownTurns,
   isQuestion,
+  containsToken,
   matchesInterest,
   mentionsPersona,
   messagesSinceLastSpoke,
@@ -60,6 +61,13 @@ describe('predicates', () => {
     expect(mentionsPersona('yo Cai', caius)).toBe(true);
     expect(mentionsPersona('caiusing around', caius)).toBe(false); // not a whole word
     expect(mentionsPersona('nobody here', caius)).toBe(false);
+  });
+
+  it('containsToken matches whole tokens only (for nick highlights)', () => {
+    expect(containsToken('hey Satchel, you around?', 'Satchel')).toBe(true);
+    expect(containsToken('hey satchel', 'Satchel')).toBe(true);
+    expect(containsToken('the satchels are packed', 'Satchel')).toBe(false);
+    expect(containsToken('anything', '')).toBe(false);
   });
 
   it('isQuestion detects "?" and leading question words', () => {
@@ -178,6 +186,31 @@ describe('selectSpeakers', () => {
     // caius mentioned (100-tier), mira only topic-event (40-tier) → caius first.
     const chosen = selectSpeakers(ctx({ personas: [caius, mira], messages: [msg('user', 'Caius likes coffee')] }));
     expect(chosen[0].personaId).toBe('caius');
+  });
+
+  it('a small room never deadlocks on cooldowns (live regression: #arcade stalled)', () => {
+    // Two people (#library-sized): after one line each, both are inside their 3–4
+    // turn cooldowns. Before the fix an idle tick chose nobody, forever.
+    const dex = persona({ id: 'dex', name: 'Dex', temperament: { talkativeness: 0.4, warmth: 0.3, pettiness: 0 } });
+    const log = [msg('user', 'hi both'), msg('mira', 'hey!'), msg('dex', 'yo')];
+    const idle = selectSpeakers(ctx({ personas: [mira, dex], messages: log, trigger: 'idle' }));
+    expect(idle.map((c) => c.personaId)).toEqual(['mira']); // never dex, who spoke last
+
+    // Reactions keep the full cooldown — that's what stops two personas ping-ponging.
+    const reply = selectSpeakers(ctx({ personas: [mira, dex], messages: [...log, msg('dex', 'Mira?')] }));
+    expect(reply).toEqual([]);
+  });
+
+  it('you naming a persona gets an answer even mid-cooldown or mid-monologue', () => {
+    const justSpoke = [msg('mira', 'that book wrecked me'), msg('user', 'Mira, which book?')];
+    expect(selectSpeakers(ctx({ personas: [caius, mira], messages: justSpoke }))[0]?.personaId).toBe('mira');
+
+    const chatty = [msg('mira', 'a'), msg('caius', 'b'), msg('mira', 'c'), msg('mira', 'd'), msg('user', 'Mira — and then?')];
+    expect(selectSpeakers(ctx({ personas: [caius, mira], messages: chatty }))[0]?.personaId).toBe('mira');
+
+    // A networked human counts too.
+    const remote = [msg('mira', 'hi'), msg('human:2', 'Mira, you there?')];
+    expect(selectSpeakers(ctx({ personas: [caius, mira], messages: remote }))[0]?.personaId).toBe('mira');
   });
 });
 
