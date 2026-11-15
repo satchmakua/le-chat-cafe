@@ -67,6 +67,8 @@ import {
   splitLogs,
 } from '../core/channels';
 import { channels as channelDefs } from '../channels';
+import { formatLog, logFilename } from '../util/exportLog';
+import { downloadText } from '../util/download';
 
 const OLLAMA_URL = 'http://localhost:11434';
 /** One-off prompt nudge for a persona arriving (DESIGN §12.2). */
@@ -1257,7 +1259,7 @@ export const useRoom = create<RoomState>((set, get) => ({
       }
       case 'help':
         get().postSystem(
-          '* commands: /join #chan /part /list /query <nick> /msg <nick> <text> /nick <name> /who /whois <nick> /forget <nick> /kick <nick> /invite <nick> /topic <text> /me <action> /regen /fork *',
+          '* commands: /join #chan /part /list /query <nick> /msg <nick> <text> /nick <name> /who /whois <nick> /forget <nick> /kick <nick> /invite <nick> /topic <text> /me <action> /export /regen /fork *',
         );
         break;
       case 'list': {
@@ -1448,6 +1450,21 @@ export const useRoom = create<RoomState>((set, get) => ({
       case 'me': {
         const action = args.join(' ');
         if (action) get().postSystem(`* ${selfName(get()) || 'you'} ${action} *`, 'event');
+        break;
+      }
+      case 'export': {
+        // The window you're in, as a plain IRC-style .log (DESIGN §12.5).
+        const s = get();
+        const now = Date.now();
+        const nameOf = (author: string) =>
+          author === 'user' || s.myIds.includes(author)
+            ? selfName(s) || 'you'
+            : (s.participantNames[author] ?? author);
+        const filename = logFilename(channel, now);
+        const text = formatLog(s.messages, { label, personas, nameOf, now });
+        get().postSystem(
+          downloadText(filename, text) ? `* saved ${label} to ${filename} *` : "* couldn't save the log here *",
+        );
         break;
       }
       case 'regen':

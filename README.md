@@ -10,13 +10,13 @@ you, they talk to *each other*, they come and go, and they remember you and how 
 feel about you across sessions. Wander between channels, slip into a private chat, or
 open the playground and tune the room like an instrument.
 
-**Status:** _Phases 0–3 done (M0–M6.2); Phase 4, "a living world", is in progress
-(M7–M10 done, M11 next)._ A persistent multi-persona room with the Conductor, a
-friendship sim, a power-user playground, CRT/AIM themes, `/commands`, a
-persona-distinctness eval, and an opt-in WebSocket relay so other humans can join. Plus
-your own nick, personas who drift in and out, profile cards showing what each one
-remembers, and `#cafe` / `#arcade` / `#library` with their own crowds and private DMs.
-See [ROADMAP.md](ROADMAP.md) for the plan.
+**Status:** _full roadmap built (Phases 0–4, M0–M11)._ A persistent multi-persona
+room with the Conductor, a friendship sim, a power-user playground, CRT/AIM themes,
+`/commands`, a persona-distinctness eval, and an opt-in WebSocket relay so other
+humans can join. Plus your own nick, personas who drift in and out, profile cards
+showing what each one remembers, `#cafe` / `#arcade` / `#library` with their own
+crowds and private DMs, and AIM-era touches: door sounds, chimes, unread counts in the
+tab title, and `/export` to a `.log`. See [ROADMAP.md](ROADMAP.md) for the plan.
 
 ---
 
@@ -53,7 +53,8 @@ npm run dev     # start it → open the printed URL (default http://localhost:51
 Type a message and the room responds — personas reply to you and to each other,
 streaming token-by-token. Leave it idle and someone breaks the silence.
 
-**In the room:** toggle the CRT ↔ AIM theme and open the ⚙ playground from the header.
+**In the room:** the header toggles the CRT ↔ AIM theme and room sounds (♪) and opens
+the ⚙ playground.
 Hover a message and click ⑂ to rewind the timeline. Click any nick for their profile
 card: bio, how they feel about you, what they remember (hover a memory and click ✕ to
 make them forget it), and a **message** button for a private chat. Type `/help` for
@@ -68,6 +69,7 @@ the full list of commands:
 | `/kick <nick>` · `/invite <nick>` | Send a persona away · bring them back |
 | `/forget <nick>` | Clear everything a persona remembers |
 | `/topic <text>` · `/me <action>` | Steer the room · narrate an action |
+| `/export` | Save the window you're in as an IRC-style `.log` |
 | `/regen` · `/fork` | Redo the last persona line · rewind to your last message |
 
 Personas who like you sometimes message you first while you're in another channel;

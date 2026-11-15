@@ -5,6 +5,8 @@ import { Composer } from './ui/Composer';
 import { Playground } from './ui/Playground';
 import { ProfileCard } from './ui/ProfileCard';
 import { ChannelList } from './ui/ChannelList';
+import { useRoomAlerts } from './ui/useRoomAlerts';
+import { playCue } from './ui/sounds';
 import { useRoom } from './state/store';
 import { channelLabel, isDm } from './core/channels';
 import { channels } from './channels';
@@ -27,6 +29,9 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem('theme') as Theme | null) ?? 'crt',
   );
+  // Room sounds (DESIGN §12.5): on unless this browser turned them off.
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem('sounds') !== 'off');
+  useRoomAlerts(soundOn);
 
   useEffect(() => {
     void init();
@@ -36,6 +41,13 @@ export function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    localStorage.setItem('sounds', next ? 'on' : 'off');
+    if (next) playCue('chime'); // a preview — and the click unlocks audio for the page
+  };
 
   return (
     <div className={styles.app}>
@@ -57,6 +69,15 @@ export function App() {
               title="toggle CRT / AIM theme"
             >
               {theme === 'crt' ? '◓ aim' : '◑ crt'}
+            </button>
+            <button
+              className={styles.gear}
+              onClick={toggleSound}
+              title={soundOn ? 'sounds on — click to mute' : 'sounds off — click to turn on'}
+              aria-pressed={soundOn}
+              aria-label="room sounds"
+            >
+              {soundOn ? '♪ on' : '♪ off'}
             </button>
             <button
               className={styles.gear}

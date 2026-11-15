@@ -2,9 +2,9 @@
 
 The milestone checklist.
 
-> **Phases 0–3 complete (M0–M6.2).** v1 confirmed 2026-06-28; multiplayer (M6)
-> confirmed 2026-07-17 by a two-browser-tab test. **Phase 4 — a living world (M7–M11)
-> is in progress.**
+> **Phases 0–4 complete (M0–M11).** v1 confirmed 2026-06-28; multiplayer (M6)
+> confirmed 2026-07-17 by a two-browser-tab test; Phase 4, a living world (M7–M11),
+> built and tested in the browser, 2026-11 (M7–M10 against real local models).
 
 **Rules of the road:**
 - Each milestone is an **independently runnable** slice — something actually testable
@@ -123,14 +123,14 @@ spec in [DESIGN.md §12](DESIGN.md).
   remembers, and her strongest feelings about the others; `/whois Dex` opens his;
   Esc closes it; nothing is added to the chat log.
 
-- [ ] **M10 — Channels & DMs.** `#cafe` / `#arcade` / `#library` with per-channel logs,
+- [x] **M10 — Channels & DMs.** `#cafe` / `#arcade` / `#library` with per-channel logs,
   topics, and members; `/join` `/part` `/list` `/query`; private `/msg`; personas who
   like you occasionally DM you first. _(DESIGN §12.4)_
   **Test:** `/join #arcade` → only the arcade crowd is there and they talk there;
   switch back → #cafe's history is intact; `/msg Mira hi` → a private `@Mira` window
   opens and only she answers; reload → channels, DMs, and topics persist.
 
-- [ ] **M11 — Retro polish.** Synthesized sounds (with a toggle), `/export` to a `.log`,
+- [x] **M11 — Retro polish.** Synthesized sounds (with a toggle), `/export` to a `.log`,
   unread counts in the tab title. _(DESIGN §12.5)_
   **Test:** a persona arrives → a door sound plays (toggle it off in the header →
   silence); `/export` downloads a readable `.log` of the current channel; hide the tab

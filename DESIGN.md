@@ -755,3 +755,24 @@ function planPresenceChange(
   Header toggle, remembered per browser.
 - `/export` downloads the active channel as a plain IRC-style `.log`.
 - A hidden tab shows unread counts in its title — `(3) le-chat-cafe`.
+
+**As built (M11):**
+
+- The decisions are pure (`src/util/cues.ts`: which just-finished lines are news,
+  which cue each gets, the title; `src/util/exportLog.ts`: the log format). The browser
+  half is thin: `src/ui/sounds.ts` synthesizes the cues, and `useRoomAlerts` watches the
+  store from outside, so the store never touches audio or the DOM.
+- Only *live* lines make noise. A persona turn counts when it finishes streaming, not
+  when it starts. A channel switch, a (dis)connect, a hydrate, or a relay snapshot swaps
+  in history, which is never news: those updates are skipped, as is any line older than
+  the page, and any update that finishes more than two lines at once.
+- One sound per update, by priority: a chime (your name, or a DM, including one landing
+  in a background window) beats a door opening, which beats a door closing. Your own
+  lines never cue.
+- The hidden-tab count is other people's lines (persona or human, any channel) since
+  the tab was hidden, and it clears when you come back.
+- The log: a header, `--- Day changed …` whenever the date turns over,
+  `[HH:MM] <Nick> text` (one per line of a multi-line message), `[HH:MM] * event` for
+  room events. UI notices and unfinished lines are left out, and persona text gets the
+  same backstop cleaning as the log view. Named `le-chat-cafe-<channel>-<date>.log` (a
+  DM is named for the persona).

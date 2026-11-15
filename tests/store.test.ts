@@ -1,6 +1,9 @@
 import 'fake-indexeddb/auto'; // the store persists fire-and-forget; give it a database
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useRoom } from '../src/state/store';
+import { downloadText } from '../src/util/download';
+
+vi.mock('../src/util/download', () => ({ downloadText: vi.fn(() => false) }));
 import type { ChatChunk, ChatRequest, LLMProvider } from '../src/llm/provider';
 
 /** A provider that streams one canned reply in small chunks and records the request. */
@@ -164,6 +167,18 @@ describe('channels & DMs (DESIGN §12.4)', () => {
     await useRoom.getState().startGeneration(juno());
     const system = provider.last?.messages.find((t) => t.role === 'system')?.content ?? '';
     expect(system).toMatch(/^You are Juno, chatting in #arcade \(the games corner: .*; the topic right now: speedrun night\) with/);
+  });
+
+  it('/export saves the window you are in as an IRC-style .log', () => {
+    const saved = vi.mocked(downloadText);
+    saved.mockReturnValueOnce(true);
+    useRoom.setState({ nick: 'Satchel' });
+    useRoom.getState().sendUserMessage('anyone up?');
+    useRoom.getState().runCommand('/export');
+    const [filename, text] = saved.mock.calls.at(-1) ?? [];
+    expect(filename).toMatch(/^le-chat-cafe-cafe-\d{4}-\d\d-\d\d\.log$/);
+    expect(text).toContain('<Satchel> anyone up?');
+    expect(useRoom.getState().messages.at(-1)?.text).toBe(`* saved #cafe to ${filename} *`);
   });
 
   it('/part leaves a channel for home; home itself cannot be parted', () => {
