@@ -22,18 +22,23 @@ tab title, and `/export` to a `.log`. See [ROADMAP.md](ROADMAP.md) for the plan.
 
 ## Run it
 
-**Prerequisites:** Node.js ≥ 22 (check: `node -v`). For real personas, install
-[Ollama](https://ollama.com) and pull the models the personas use (see each
-`src/personas/*.json` — currently `qwen2.5:7b-instruct` and `qwen2.5:1.5b-instruct`):
+**Prerequisites:** Node.js ≥ 22 (check: `node -v`), and [Ollama](https://ollama.com)
+running with the model the personas use (see each `src/personas/*.json` — currently
+`llama3.1:8b` for all four, about 5 GB):
 
 ```bash
-ollama pull qwen2.5:7b-instruct
-ollama pull qwen2.5:1.5b-instruct
+ollama pull llama3.1:8b
 ```
 
-Don't have those exact tags? Fine — if a persona names a model that isn't installed,
-the app automatically substitutes the closest installed one (same family, else any)
-and posts a notice in the chat log.
+Don't have that exact tag? If a persona names a model that isn't installed, the app
+substitutes the largest installed one (same family first) and posts a notice in the
+chat log. **Model size matters more than anything else here:** an 8B model answers
+you and follows the room; a 1–2B model mostly talks past everyone. To see how a model
+does before committing to it, run the same scripted scene against any installed tag:
+
+```bash
+npm run eval:converse -- llama3.1:8b qwen2.5:7b-instruct
+```
 
 Ollama must allow the browser origin or the fetch is CORS-blocked. Start it with:
 
@@ -42,8 +47,14 @@ Ollama must allow the browser origin or the fetch is CORS-blocked. Start it with
 # Windows (PowerShell): $env:OLLAMA_ORIGINS='*'; ollama serve
 ```
 
-Without Ollama the app still runs — it falls back to a built-in `MockProvider` (the
-header shows `● mock` vs `● ollama`) so you can see the Conductor take turns.
+If the page can't reach Ollama, the room says so: the header shows `● offline`, a
+banner explains what to start, and the personas stay quiet instead of faking it. It
+keeps checking, so starting Ollama brings them back without a reload. (The banner's
+**demo mode** runs placeholder lines if you only want to look around.)
+
+**If the personas never show up:** check that Ollama is actually serving with
+`ollama list`. The desktop app can stop its own server while installing an update and
+not bring it back; `ollama serve` in a terminal starts it directly.
 
 ```bash
 npm install     # once
@@ -85,6 +96,7 @@ in the ⚙ playground.
 | `npm run typecheck` | Type-check with `tsc` (no emit) |
 | `npm run build` | Production build (typecheck + Vite build) |
 | `npm run eval` | Persona-distinctness report (add `:ollama` for real models) |
+| `npm run eval:converse` | Run a scripted conversation against installed models and print it |
 | `npm run relay` | Start the multiplayer relay (`ws://localhost:8787`) |
 
 ### Multiplayer (optional)

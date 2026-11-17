@@ -54,6 +54,9 @@ describe('hydrate (DESIGN §6.2, §12.4)', () => {
     const s = useRoom.getState();
     expect(s.channel).toBe('cafe');
     expect(s.summarized).toEqual({ cafe: 42 });
+    // No Ollama → the room is offline and says so; it never falls back to canned lines.
+    expect(s.providerKind).toBe('offline');
+    expect(s.ready).toBe(true);
     expect(s.topics).toEqual({ cafe: 'the old topic' });
   });
 });

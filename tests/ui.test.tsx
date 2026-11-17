@@ -5,6 +5,7 @@ import { MessageList } from '../src/ui/MessageList';
 import { NickList } from '../src/ui/NickList';
 import { ProfileCard } from '../src/ui/ProfileCard';
 import { ChannelList } from '../src/ui/ChannelList';
+import { OfflineBanner } from '../src/ui/OfflineBanner';
 import { useRoom } from '../src/state/store';
 
 beforeAll(() => {
@@ -63,6 +64,24 @@ describe('NickList', () => {
     expect(card.textContent).toContain('feels about you');
     expect(card.textContent).toContain('remembers');
     act(() => useRoom.getState().closeProfile());
+  });
+});
+
+describe('OfflineBanner', () => {
+  it('says plainly when the personas are not there, and stays out of the way when they are', () => {
+    act(() => useRoom.setState({ ready: true, providerKind: 'offline' }));
+    const { rerender } = render(<OfflineBanner />);
+    expect(screen.getByRole('status').textContent).toContain('The regulars are offline');
+    expect(screen.getByText('ollama serve')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('demo mode'));
+    expect(useRoom.getState().providerKind).toBe('mock');
+    expect(screen.getByRole('status').textContent).toContain('placeholder lines, not the personas');
+
+    act(() => useRoom.setState({ providerKind: 'ollama' }));
+    rerender(<OfflineBanner />);
+    expect(screen.queryByRole('status')).toBeNull();
+    act(() => useRoom.setState({ providerKind: 'mock', ready: false }));
   });
 });
 

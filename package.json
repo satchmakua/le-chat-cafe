@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "eval": "tsx eval/run.ts",
     "eval:ollama": "tsx eval/run.ts --ollama",
+    "eval:converse": "tsx eval/converse.ts",
     "relay": "tsx server/relay.ts"
   },
   "dependencies": {

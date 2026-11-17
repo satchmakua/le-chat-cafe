@@ -60,7 +60,7 @@ export function characterPriors(systemPrompt: string): string[] {
 
 export const RECITE_N = 4;
 
-/** Words long enough to carry meaning — an n-gram needs two of them to count. */
+/** Words long enough to carry meaning — an n-gram needs three of them to count. */
 function isContentWord(w: string): boolean {
   return w.length >= 4;
 }
@@ -69,14 +69,16 @@ function isContentWord(w: string): boolean {
  * Verbatim recitation: does `candidate` contain any distinctive `n`-word run from the
  * character prompt? Catches partial parroting ("Chaotic-good hype energy here!")
  * that whole-clause overlap can't see. Runs made mostly of short glue words
- * ("in a friendly way") don't count, so ordinary phrasing isn't punished.
+ * ("in a friendly way") don't count, so ordinary phrasing isn't punished — nor does
+ * an everyday idiom the notes happen to use: with two content words as the bar,
+ * Caius saying "I've got a soft spot for old computer parts" was thrown away.
  */
 export function recitesPrompt(candidate: string, systemPrompt: string, n = RECITE_N): boolean {
   const source = normalizeWords(systemPrompt);
   const grams = new Set<string>();
   for (let i = 0; i + n <= source.length; i++) {
     const run = source.slice(i, i + n);
-    if (run.filter(isContentWord).length >= 2) grams.add(run.join(' '));
+    if (run.filter(isContentWord).length >= 3) grams.add(run.join(' '));
   }
   const words = normalizeWords(candidate);
   for (let i = 0; i + n <= words.length; i++) {

@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'; // the store persists fire-and-forget; give it a database
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useRoom } from '../src/state/store';
 import { downloadText } from '../src/util/download';
 
@@ -188,5 +188,91 @@ describe('channels & DMs (DESIGN §12.4)', () => {
     expect(useRoom.getState().joined).toEqual(['cafe']);
     useRoom.getState().runCommand('/part');
     expect(useRoom.getState().messages.at(-1)?.text).toBe("* #cafe is home — it can't be parted *");
+  });
+});
+
+describe('a turn that answers you is told so (live: "Hey Caius" got a reply about pizza)', () => {
+  it('quotes your line to the persona you addressed; an idle turn gets no such nudge', async () => {
+    const provider = scripted('hey! what is up?');
+    useRoom.setState({ provider, nick: 'Satchel', muted: ['caius', 'dex', 'juno'] });
+    useRoom.getState().sendUserMessage('Hey Mira');
+    await settle();
+    const asked = provider.last?.messages.find((t) => t.role === 'user')?.content ?? '';
+    expect(asked).toContain('Satchel just said this to you: "Hey Mira".');
+    expect(asked).toContain('talk to Satchel rather than to the rest of the room');
+    expect(texts('mira')).toEqual(['hey! what is up?']);
+
+    useRoom.setState({ messages: [] });
+    await useRoom.getState().startGeneration(juno());
+    expect(provider.last?.messages.find((t) => t.role === 'user')?.content).not.toContain('just said this to you');
+  });
+});
+
+describe('when Ollama is unreachable (live: the room faked it with canned lines)', () => {
+  const tagsOk = () =>
+    Promise.resolve(new Response(JSON.stringify({ models: [{ name: 'llama3.1:8b' }] }), { status: 200 }));
+  const refused = () => Promise.reject(new TypeError('Failed to fetch'));
+  const failing: LLMProvider = {
+    async *chat(): AsyncIterable<ChatChunk> {
+      throw new Error('Failed to fetch');
+    },
+    async generate() {
+      return '';
+    },
+  };
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useRoom.setState({ providerKind: 'mock' });
+  });
+
+  it('offline means silence: nobody speaks, and nothing pretends to', async () => {
+    useRoom.setState({ providerKind: 'offline', provider: scripted('should never be said'), muted: [] });
+    useRoom.getState().sendUserMessage('Hi everyone');
+    await settle();
+    const s = useRoom.getState();
+    expect(s.messages.map((m) => m.author)).toEqual(['user']);
+    expect(s.generating).toEqual([]);
+  });
+
+  it('reconnect switches to Ollama the moment it answers, and replies to what you said', async () => {
+    vi.stubGlobal('fetch', refused);
+    useRoom.setState({ providerKind: 'offline', muted: [] });
+    useRoom.getState().sendUserMessage('anyone?');
+    expect(await useRoom.getState().reconnect()).toBe(false);
+    expect(useRoom.getState().providerKind).toBe('offline');
+
+    // Ollama comes up. (The chat call itself then fails here — there's no server —
+    // which is fine: this checks the switch, not a reply.)
+    vi.stubGlobal('fetch', (url: string) => (String(url).endsWith('/api/tags') ? tagsOk() : refused()));
+    expect(await useRoom.getState().reconnect()).toBe(true);
+    const s = useRoom.getState();
+    expect(s.providerKind).toBe('ollama');
+    expect(s.availableModels).toEqual(['llama3.1:8b']);
+    expect(s.messages.some((m) => m.text === '* Ollama is up — the regulars are back *')).toBe(true);
+    await settle();
+  });
+
+  it('a turn that gets no answer is dropped, never posted as the persona’s line', async () => {
+    vi.stubGlobal('fetch', refused);
+    useRoom.setState({ provider: failing, providerKind: 'ollama' });
+    await useRoom.getState().startGeneration(juno());
+    await settle();
+    const s = useRoom.getState();
+    expect(s.messages.filter((m) => m.author === 'juno')).toEqual([]);
+    expect(s.messages.some((m) => m.text.includes('Failed to fetch'))).toBe(false);
+    expect(s.providerKind).toBe('offline'); // Ollama is gone → the room says so and waits
+  });
+
+  it('when Ollama is up but the model fails, it says why once — as a notice', async () => {
+    vi.stubGlobal('fetch', tagsOk);
+    useRoom.setState({ provider: failing, providerKind: 'ollama' });
+    await useRoom.getState().startGeneration(juno());
+    await settle();
+    await useRoom.getState().startGeneration(juno());
+    await settle();
+    const notices = useRoom.getState().messages.filter((m) => m.text.startsWith('* a reply failed'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0].notice).toBe(true);
+    expect(useRoom.getState().providerKind).toBe('ollama');
   });
 });

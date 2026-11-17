@@ -13,6 +13,7 @@ export type Trigger = 'message' | 'idle';
 export const BASE: Record<Reason, number> = {
   mention: 100, // their nick (or alias) appears in the latest message
   question: 60, // latest message is a question AND matches their interests
+  reply: 50, // a human spoke and nobody else had cause to answer (§4.4)
   event: 40, // a topic they care about surfaced in the latest message
   idle: 20, // the room has been quiet past idleMs
 };
@@ -138,6 +139,9 @@ export interface SelectContext {
   config: ConductorConfig;
   /** Injectable for deterministic tests; defaults to Math.random. */
   rng?: () => number;
+  /** Guarantee a human's line an answer (default true). Off in a shared room with
+   *  several humans, who are often talking to each other. */
+  answerHumans?: boolean;
 }
 
 /** The single best candidate for one persona, or null if it has no reason to speak. */
@@ -193,6 +197,35 @@ function collectCandidates(ctx: SelectContext, rng: () => number, relaxed: boole
   return candidates;
 }
 
+/** How far back "you were just talking with them" reaches, in spoken lines. */
+const REPLY_LOOKBACK = 3;
+
+/**
+ * Who answers a human's line that gave nobody a reason to speak. First choice is
+ * whoever they were just talking with — "what do you mean?" is for the last person
+ * who spoke. Otherwise the most talkative persona free to answer. Cooldown and the
+ * monologue cap don't apply: those keep personas from ping-ponging with each other.
+ */
+function answerToHuman(ctx: SelectContext, rng: () => number): TurnCandidate | null {
+  const latest = triggerMessage(ctx.messages);
+  if (!latest || !isHumanAuthor(latest.author)) return null;
+  // Someone is already typing a reply to it — one answer, not a pile-on.
+  if (ctx.messages.slice(ctx.messages.lastIndexOf(latest) + 1).some((m) => m.pending)) return null;
+  const free = ctx.personas.filter((p) => !ctx.generating.has(p.id));
+  if (free.length === 0) return null;
+  const score = (p: Persona) =>
+    BASE.reply + p.temperament.talkativeness * ctx.config.chattinessWeight + rng() * ctx.config.jitterMax;
+
+  const spoken = ctx.messages.filter((m) => !m.pending && m.author !== 'system' && m.text.trim());
+  const before = spoken.slice(0, spoken.lastIndexOf(latest)).slice(-REPLY_LOOKBACK).reverse();
+  const partner = before.map((m) => free.find((p) => p.id === m.author)).find((p) => !!p);
+  if (partner) return { personaId: partner.id, reason: 'reply', score: score(partner) };
+
+  const ranked = free.map((p) => ({ personaId: p.id, reason: 'reply' as const, score: score(p) }));
+  ranked.sort((a, b) => b.score - a.score);
+  return ranked[0];
+}
+
 /**
  * Decide who speaks this tick (§4.4): generate + score candidates, drop those
  * on cooldown / monologuing / below minScore, sort by score, and return up to
@@ -204,6 +237,13 @@ export function selectSpeakers(ctx: SelectContext): TurnCandidate[] {
   if (slots <= 0) return [];
 
   let candidates = collectCandidates(ctx, rng, false);
+  // A person in the room is never met with silence. "Hi everyone" names nobody, asks
+  // nothing, and matches no interest, so by the rules above nobody had a reason to
+  // answer and the line sat there until the idle timer happened by.
+  if (candidates.length === 0 && ctx.trigger === 'message' && ctx.answerHumans !== false) {
+    const answer = answerToHuman(ctx, rng);
+    if (answer) candidates = [answer];
+  }
   // Cooldowns must never silence a whole room. They're counted in turns, and a small
   // channel (#library has two people, #arcade three) runs out of rested speakers within
   // one round — then nobody could talk until a human did. So on an idle tick where

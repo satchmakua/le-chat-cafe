@@ -65,7 +65,7 @@ export interface PersonaMemory {
 
 // --- Conductor (DESIGN §4); formalized in M1 ---
 
-export type Reason = 'mention' | 'question' | 'event' | 'idle';
+export type Reason = 'mention' | 'question' | 'reply' | 'event' | 'idle';
 
 export interface TurnCandidate {
   personaId: string;

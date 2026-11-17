@@ -209,6 +209,19 @@ score. Prevents two chatty personas from locking out the room.
   channel (#library has two people) runs out of rested speakers within one round,
   and the room stalled until a human spoke. On an idle tick where everyone is cooling
   down, the floor drops to "not whoever spoke last".
+- **A person is never met with silence.** "Hi everyone" names nobody, asks nothing,
+  and matches no interest, so no candidate existed and the line waited for the idle
+  timer. Now a human's line that gives nobody a reason to speak still gets exactly one
+  reply at once (`reply`, base 50): from whoever they were just talking with ("what do
+  you mean?" is for the last speaker), else the most talkative persona free. One
+  answer, not a pile-on: it's skipped while someone is already typing after that line,
+  and in a shared room with several humans, who are often talking to each other.
+- **A turn that answers a person is told so.** Whenever a turn exists because a human
+  spoke to that persona (mention, question, or the reply above), the prompt gets a
+  one-off directive that quotes the line and says whom to answer. Without it "Hey
+  Caius" got a reply about someone else's pizza: a line that is all address and no
+  content gives a model nothing to latch onto, so it returns to the last thing with
+  substance.
 
 ### 4.5 Tunable constants (one place)
 
@@ -305,6 +318,22 @@ personas, a larger one for the "host"/closest persona. Verify exact tags at
 [ollama.com/library](https://ollama.com/library) when scaffolding — as of 2026-06-27
 good defaults are ambient = **`llama3.2:3b`** or **`gemma3:4b`**, host = **`qwen3:8b`**
 or **`llama3.1:8b`**.
+
+**Revised 2026-11: one 8B-class model for everyone.** Tiering was the wrong trade. I
+ran one scripted scene (`npm run eval:converse`: say hi, name a persona, share
+something) through the real prompts on three installed models:
+
+| Model | Answers you? | Follows the room? | s/turn |
+|---|---|---|---|
+| `qwen2.5:1.5b-instruct` | No — greeted by name, Mira replied "Hi Dex and Juno!" | No | ~1.1 |
+| `qwen2.5:7b-instruct` | Yes, tersely | Partly; repeats itself | ~1.6 |
+| `llama3.1:8b` | Yes, with follow-up questions | Yes; personas build on each other | ~1.0–1.8 |
+
+The small tier saved under a second per turn and cost the whole illusion: it produced
+most of the leaked markup, recited prompts, and non-answers. All four personas now run
+`llama3.1:8b`. One loaded model also means no swapping between turns. Voices stay
+distinct through prompt and temperature. The model resolver falls back to the
+*largest* installed tag, never the first one listed.
 
 ### 6.2 Room (transport core)
 
@@ -513,8 +542,19 @@ the default and is unaffected.
   Ollama allows the origin. → Document setting `OLLAMA_ORIGINS` (e.g. to the Vite dev
   origin / `*` for local dev) in README; surface a friendly "can't reach Ollama —
   set OLLAMA_ORIGINS" error in-app.
+- **Ollama not running, shown as broken personas.** The app used to fall back silently
+  to `MockProvider`, whose eight canned lines read as four personas that ignore you —
+  the single worst first impression it could make, flagged only by a small `● mock` in
+  the header. Ollama not running is also the common case, not an edge: it doesn't
+  start at login by default, and its desktop app can stop its own server to install
+  an update. → The room now has an **offline** state. It says so (header `● offline`
+  plus a banner with what to start), the personas stay quiet, and the store probes
+  every 8 s and switches to Ollama by itself, then answers what was said meanwhile.
+  A turn that gets no response at all is dropped instead of being posted as the
+  persona's line; if Ollama is still up, the reason is posted once as a notice.
+  `MockProvider` remains for tests and as an explicit **demo mode** in the banner.
 - **Latency stacking.** Several personas reacting in sequence can queue up. →
-  `MAX_CONCURRENT=2`, small models for ambient personas, and streaming so the *first*
+  `MAX_CONCURRENT=2`, one loaded model (no swapping between turns), and streaming so the *first*
   token appears fast. Show typing indicators so waiting feels intentional.
 - **Affinity drift.** Self-reported deltas may spiral. → ±0.15/turn clamp + decay
   toward 0 on session load (§6.6). Watch in M3; switch to the structured `generate()`

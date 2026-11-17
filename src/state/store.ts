@@ -34,6 +34,7 @@ import {
   stripNamePrefix,
 } from '../runtime/repetition';
 import {
+  answerDirective,
   assemblePrompt,
   buildPromptParts,
   formatTranscript,
@@ -92,7 +93,9 @@ const KV_JOINED = 'joined';
 const KV_DMS = 'dms';
 const KV_UNREAD = 'unread';
 
-export type ProviderKind = 'mock' | 'ollama';
+/** `ollama` = real personas; `offline` = Ollama can't be reached, so the room waits
+ *  (and says so); `mock` = placeholder lines — tests, and the explicit demo mode. */
+export type ProviderKind = 'mock' | 'ollama' | 'offline';
 
 export interface ABSlot {
   personaId: string;
@@ -248,6 +251,9 @@ interface RoomState {
   closeWindow: (id: string) => void;
   provider: LLMProvider;
   providerKind: ProviderKind;
+  /** True once the startup probe has answered — until then nobody knows whether the
+   *  personas are there, so the UI holds off saying either way. */
+  ready: boolean;
   /** Model tags installed on the local Ollama ([] = unknown / mock). */
   availableModels: string[];
   /** personaIds currently streaming (concurrency cap lives in the Conductor). */
@@ -288,6 +294,10 @@ interface RoomState {
   connection: { room: string; name: string } | null;
 
   init: () => Promise<void>;
+  /** Probe Ollama now and switch to it if it answers; resolves to whether it did. */
+  reconnect: () => Promise<boolean>;
+  /** Run on placeholder lines instead of models — an explicit demo, never a default. */
+  startDemo: () => void;
   connect: (url: string, room: string, name: string) => Promise<void>;
   disconnect: () => void;
   sendUserMessage: (text: string) => void;
@@ -412,6 +422,7 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
   provider: new MockProvider(),
   providerKind: 'mock',
+  ready: false,
   availableModels: [],
   generating: [],
   config: DEFAULT_CONDUCTOR_CONFIG,
@@ -437,23 +448,17 @@ export const useRoom = create<RoomState>((set, get) => ({
     if (initialized) return; // guard against React StrictMode double-invoke
     initialized = true;
 
-    // Probe Ollama; this fetch also doubles as the CORS check (DESIGN §9).
-    // Fall back to the MockProvider so the app always runs.
-    try {
-      const res = await fetch(`${OLLAMA_URL}/api/tags`, { method: 'GET' });
-      if (res.ok) {
-        // The tags list doubles as the installed-model inventory, so persona
-        // model tags can be resolved against what this machine actually has.
-        const data = (await res.json()) as { models?: { name: string }[] };
-        set({
-          provider: new OllamaProvider({ baseUrl: OLLAMA_URL }),
-          providerKind: 'ollama',
-          availableModels: (data.models ?? []).map((m) => m.name),
-        });
-      }
-    } catch {
-      // stay on MockProvider
+    // Probe Ollama (DESIGN §9). If it can't be reached the room is *offline*: it says
+    // so and waits for Ollama to appear. It used to fall back to canned mock lines,
+    // which read as four broken personas rather than as "nothing is running".
+    const models = await probeOllama();
+    if (models) {
+      set({ provider: new OllamaProvider({ baseUrl: OLLAMA_URL }), providerKind: 'ollama', availableModels: models });
+    } else {
+      set({ providerKind: 'offline' });
+      watchForOllama();
     }
+    set({ ready: true });
 
     // Hydrate everything persisted (DESIGN §6.2). If nothing's stored, persist
     // the seed welcome so the next reload restores it.
@@ -579,6 +584,28 @@ export const useRoom = create<RoomState>((set, get) => ({
 
     scheduleIdle(); // let the room come alive on its own
     schedulePresence(true); // first comings & goings land early in a visit
+  },
+
+  async reconnect() {
+    if (get().providerKind === 'ollama') return true;
+    const models = await probeOllama();
+    if (!models) return false;
+    if (get().providerKind === 'ollama') return true; // another probe got there first
+    stopWatchingForOllama();
+    set({ provider: new OllamaProvider({ baseUrl: OLLAMA_URL }), providerKind: 'ollama', availableModels: models });
+    get().postSystem('* Ollama is up — the regulars are back *');
+    idleStreak = 0;
+    scheduleIdle();
+    schedulePresence(true);
+    get().tick('message'); // answer whatever you said while they were out
+    return true;
+  },
+
+  startDemo() {
+    set({ provider: new MockProvider(), providerKind: 'mock', availableModels: [] });
+    get().postSystem('* demo mode — placeholder lines, not the personas *');
+    watchForOllama(); // the real thing still takes over the moment it appears
+    scheduleIdle();
   },
 
   async connect(url, room, name) {
@@ -755,6 +782,7 @@ export const useRoom = create<RoomState>((set, get) => ({
   tick(trigger) {
     // In a networked room only the host drives personas; joiners just render.
     if (get().networked && !get().isHost) return;
+    if (get().providerKind === 'offline') return; // nobody home until Ollama is back
     const { channel } = get();
 
     // A DM is a conversation, not a room (DESIGN §12.4): the persona answers what you
@@ -770,7 +798,11 @@ export const useRoom = create<RoomState>((set, get) => ({
         !generating.includes(persona.id) &&
         generating.length < config.maxConcurrent &&
         (droppedUntil.get(persona.id) ?? 0) <= Date.now();
-      if (persona && free && latest?.author === 'user') void get().startGeneration(persona);
+      if (persona && free && latest?.author === 'user') {
+        void get().startGeneration(persona, {
+          directive: answerDirective(latest.text, get().nick || undefined),
+        });
+      }
       else if (generating.length === 0) scheduleIdle();
       return;
     }
@@ -803,6 +835,9 @@ export const useRoom = create<RoomState>((set, get) => ({
       trigger,
       generating: new Set(generating),
       config,
+      // With several humans in a shared room they're often talking to each other.
+      answerHumans:
+        !get().networked || get().remoteParticipants.filter((p) => p.kind === 'human').length <= 1,
     });
 
     if (chosen.length === 0) {
@@ -810,9 +845,19 @@ export const useRoom = create<RoomState>((set, get) => ({
       return;
     }
 
+    // A turn that exists because a person spoke to them gets told so (see
+    // `answerDirective`); a passing interest in the topic ('event') doesn't.
+    const latest = trigger === 'message' ? triggerMessage(messages) : undefined;
+    const speaker = latest && isHumanAuthor(latest.author) ? latest.author : null;
+    const speakerName = speaker ? promptPeople(get()).names[speaker] : undefined;
     for (const candidate of chosen) {
       const persona = members.find((p) => p.id === candidate.personaId);
-      if (persona) void get().startGeneration(persona);
+      if (!persona) continue;
+      const answering = !!speaker && candidate.reason !== 'event';
+      void get().startGeneration(
+        persona,
+        answering && latest ? { directive: answerDirective(latest.text, speakerName) } : {},
+      );
     }
   },
 
@@ -868,6 +913,7 @@ export const useRoom = create<RoomState>((set, get) => ({
     // only ever display the text before the sentinel — so it never flashes (§6.6).
     let raw = '';
     let lastStreamed = 0;
+    let failure: string | null = null;
     try {
       for await (const chunk of provider.chat(req)) {
         if (!chunk.token) continue;
@@ -888,8 +934,10 @@ export const useRoom = create<RoomState>((set, get) => ({
         }
       }
     } catch (err) {
-      const note = err instanceof Error ? err.message : String(err);
-      if (!raw) raw = `(couldn't reach the model — ${note})`;
+      // Nothing came back: there is no turn to post (it's dropped below), and
+      // `providerFailed` works out what to tell you. An error used to be posted as
+      // the persona's own line. A stream that broke midway keeps what it had.
+      if (!raw) failure = err instanceof Error ? err.message : String(err);
     } finally {
       const { clean: stripped, deltas } = stripAffinity(raw);
       const clean = ownTurn(stripped);
@@ -914,6 +962,7 @@ export const useRoom = create<RoomState>((set, get) => ({
           : log.map((m) => (m.id === replyId ? { ...m, text: clean, pending: false } : m)),
       );
       set((s) => ({ generating: removeOne(s.generating, persona.id) }));
+      if (failure) void providerFailed(failure);
       if (dropped) {
         droppedUntil.set(persona.id, Date.now() + DROP_COOLDOWN_MS);
         // Retract any live frames viewers already saw (empty final = remove).
@@ -1067,6 +1116,7 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   regenerateLast() {
     const { messages, personas, generating } = get();
+    if (get().providerKind === 'offline') return; // would delete the line and replace it with nothing
     if (get().networked) return; // timeline edits are local-only (relay owns order)
     if (generating.length > 0) return;
     const target = lastPersonaMessage(messages);
@@ -1092,7 +1142,7 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   async runAB(prompt, aId, bId) {
     const trimmed = prompt.trim();
-    if (!trimmed || get().ab.running) return;
+    if (!trimmed || get().ab.running || get().providerKind === 'offline') return;
     const { provider, personas } = get();
     const pa = personas.find((p) => p.id === aId);
     const pb = personas.find((p) => p.id === bId);
@@ -1160,6 +1210,7 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   presenceTick() {
     if (get().networked && !get().isHost) return;
+    if (get().providerKind === 'offline') return;
     const { personas, messages, generating, muted, channel } = get();
     if (isDm(channel)) return; // nobody comes or goes in a private chat
     // Presence is per channel: only this channel's crowd comes and goes here.
@@ -1185,7 +1236,7 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   maybePersonaDm(rng = Math.random) {
     const s = get();
-    if (s.networked || s.config.dmGapMs <= 0) return null;
+    if (s.networked || s.providerKind === 'offline' || s.config.dmGapMs <= 0) return null;
     if (Date.now() - lastPersonaDm < s.config.dmGapMs) return null;
     if (s.generating.length > 0) return null; // only while the room you're in is quiet
     const sender = pickDmSender(
@@ -1221,6 +1272,7 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   greet(persona) {
     const { generating, config } = get();
+    if (get().providerKind === 'offline') return;
     if (generating.includes(persona.id) || generating.length >= config.maxConcurrent) {
       pendingGreetings.add(persona.id); // say hi as soon as a reply slot frees up
       return;
@@ -1483,6 +1535,52 @@ export const useRoom = create<RoomState>((set, get) => ({
     }
   },
 }));
+
+/** Ask the local Ollama what's installed. Null when it can't be reached: not
+ *  running, or refusing this page's origin — a browser can't tell the two apart. */
+async function probeOllama(): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/tags`, { method: 'GET' });
+    if (!res.ok) return null;
+    // The tags list doubles as the installed-model inventory, so persona model tags
+    // can be resolved against what this machine actually has.
+    const data = (await res.json()) as { models?: { name: string }[] };
+    return (data.models ?? []).map((m) => m.name);
+  } catch {
+    return null;
+  }
+}
+
+const PROBE_MS = 8_000;
+let probeTimer: ReturnType<typeof setInterval> | null = null;
+
+/** While the room isn't on real models, keep checking: starting Ollama should bring
+ *  the personas back without a reload. */
+function watchForOllama(): void {
+  if (probeTimer) return;
+  probeTimer = setInterval(() => void useRoom.getState().reconnect(), PROBE_MS);
+}
+
+function stopWatchingForOllama(): void {
+  if (probeTimer) clearInterval(probeTimer);
+  probeTimer = null;
+}
+
+/** A persona turn produced nothing at all. If Ollama has gone away, the room goes
+ *  offline and waits for it; if it's still up, the model itself failed — say why,
+ *  once, as a notice rather than in a persona's mouth. */
+async function providerFailed(note: string): Promise<void> {
+  if (useRoom.getState().providerKind !== 'ollama') return;
+  if ((await probeOllama()) === null) {
+    if (useRoom.getState().providerKind !== 'ollama') return;
+    useRoom.setState({ providerKind: 'offline' });
+    clearIdle();
+    watchForOllama();
+    return;
+  }
+  const text = `* a reply failed — ${note} *`;
+  if (useRoom.getState().messages.at(-1)?.text !== text) useRoom.getState().postSystem(text);
+}
 
 function clearIdle(): void {
   if (idleTimer) {

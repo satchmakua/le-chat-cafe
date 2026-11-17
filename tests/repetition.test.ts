@@ -99,6 +99,15 @@ describe('prompt recitation (live regressions)', () => {
   });
 });
 
+describe('recitation guard leaves everyday idioms alone (live false positive)', () => {
+  it('"a soft spot for" is in the notes for Caius, and is also just English', () => {
+    const line = "I've got a soft spot for repurposed electronics – been collecting old computer parts for years.";
+    expect(recitesPrompt(line, caius.systemPrompt)).toBe(false);
+    // …while actually reading his notes back is still caught.
+    expect(recitesPrompt('I am a wry, warm regular at a late-night café chatroom.', caius.systemPrompt)).toBe(true);
+  });
+});
+
 describe('breaksCharacter', () => {
   it('catches model self-reference and denying your own name', () => {
     expect(breaksCharacter("I'm not really Dex, just fine-tuned for tech stuff.", dex)).toBe(true);

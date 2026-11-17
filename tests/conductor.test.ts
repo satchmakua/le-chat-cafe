@@ -270,3 +270,34 @@ describe('nextIdleDelay', () => {
     expect(nextIdleDelay(0, DEFAULT_CONDUCTOR_CONFIG, () => 1)).toBe(5200); // ×1.3
   });
 });
+
+describe('a human is always answered (live: "Hi everyone" met silence)', () => {
+  const caius = persona({ id: 'caius', name: 'Caius', temperament: { talkativeness: 0.7, warmth: 0.5, pettiness: 0 } });
+  const mira = persona({ id: 'mira', name: 'Mira', temperament: { talkativeness: 0.6, warmth: 0.8, pettiness: 0 } });
+  const dex = persona({ id: 'dex', name: 'Dex', temperament: { talkativeness: 0.4, warmth: 0.3, pettiness: 0 } });
+  const room = [caius, mira, dex];
+
+  it('a line that names nobody and asks nothing still gets one reply, at once', () => {
+    const chosen = selectSpeakers(ctx({ personas: room, messages: [msg('user', 'Hi everyone')] }));
+    expect(chosen).toHaveLength(1);
+    expect(chosen[0]).toMatchObject({ personaId: 'caius', reason: 'reply' }); // most talkative
+  });
+
+  it('"what do you mean?" goes to whoever you were just talking with, cooldown or not', () => {
+    const log = [msg('caius', 'evening'), msg('mira', 'ha, fair enough.'), msg('user', 'Sorry, what do you mean?')];
+    const chosen = selectSpeakers(ctx({ personas: room, messages: log }));
+    expect(chosen.map((c) => c.personaId)).toEqual(['mira']);
+  });
+
+  it('one answer, not a pile-on: nothing more while someone is already typing', () => {
+    const log = [msg('user', 'Hi everyone'), { ...msg('caius', ''), pending: true }];
+    const chosen = selectSpeakers(ctx({ personas: room, messages: log, generating: new Set(['caius']) }));
+    expect(chosen).toEqual([]);
+  });
+
+  it('personas talking among themselves get no such guarantee, and it can be switched off', () => {
+    expect(selectSpeakers(ctx({ personas: room, messages: [msg('dex', 'hm.')] }))).toEqual([]);
+    const shared = ctx({ personas: room, messages: [msg('human:2', 'brb')], answerHumans: false });
+    expect(selectSpeakers(shared)).toEqual([]);
+  });
+});

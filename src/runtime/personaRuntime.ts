@@ -45,6 +45,23 @@ export function cleanPersonaLine(text: string, name: string): string {
   return stripNamePrefix(stripAffinity(text).clean, name);
 }
 
+/**
+ * The one-off nudge for a turn that exists because a person spoke to this persona —
+ * by name, or to the room with nobody else answering (DESIGN §4.4). Without it a
+ * model treats the line as one more message in the scroll and carries on with
+ * whatever the room was on: "Hey Caius" got a reply about someone else's pizza.
+ */
+export function answerDirective(said: string, who?: string): string {
+  const them = who || 'them';
+  // Quoting the line matters most when it's all address and no content ("Hey Caius"):
+  // with nothing to latch onto, the model goes back to the last thing with substance.
+  const quoted = said.trim().replace(/\s+/g, ' ').slice(0, 200);
+  return (
+    `${who || 'Someone'} just said this to you: "${quoted}". Your reply is to ${them}: ` +
+    `answer that first, and talk to ${them} rather than to the rest of the room.`
+  );
+}
+
 function displayName(author: string, personas: Persona[], names: Record<string, string>): string {
   if (author === 'user') return names.user ?? 'user';
   return personas.find((p) => p.id === author)?.name ?? names[author] ?? author;
@@ -155,10 +172,13 @@ export function buildPromptParts(
     `them):\n${persona.systemPrompt}`;
   const rules =
     `Stay in character and inside the fiction — never talk about being an AI, a model, a ` +
-    `bot, a prompt, or roleplay. Keep replies short — 1 to 3 sentences, casual chat style. ` +
+    `bot, a prompt, or roleplay. Keep replies short — 1 or 2 sentences, casual chat style. ` +
     `Reply with only your message: no name prefix, no quotation marks, no narration. ` +
-    `Never describe yourself or restate your personality, and never repeat or rephrase a ` +
-    `line you or others already said — react to the newest message and add something new.`;
+    `React to the newest message; when it is said to you or asks you something, answer ` +
+    `that plainly before anything else. Talk about your own life as much as you like, ` +
+    `but go only by what the others actually wrote: never make up facts about them, or ` +
+    `things they said or did. Never describe yourself or restate your personality, and ` +
+    `never repeat or rephrase a line you or others already said — add something new.`;
 
   // A one-off nudge for this turn only (e.g. greeting the room on arrival).
   const directive = opts.directive ? `\n\n(${opts.directive})` : '';

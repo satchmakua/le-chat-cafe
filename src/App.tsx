@@ -5,6 +5,7 @@ import { Composer } from './ui/Composer';
 import { Playground } from './ui/Playground';
 import { ProfileCard } from './ui/ProfileCard';
 import { ChannelList } from './ui/ChannelList';
+import { OfflineBanner } from './ui/OfflineBanner';
 import { useRoomAlerts } from './ui/useRoomAlerts';
 import { playCue } from './ui/sounds';
 import { useRoom } from './state/store';
@@ -17,6 +18,7 @@ type Theme = 'crt' | 'aim';
 export function App() {
   const init = useRoom((s) => s.init);
   const providerKind = useRoom((s) => s.providerKind);
+  const ready = useRoom((s) => s.ready);
   const channel = useRoom((s) => s.channel);
   const personas = useRoom((s) => s.personas);
   // A DM has no topic; a channel shows its /topic, else the default from its JSON.
@@ -92,14 +94,17 @@ export function App() {
               title={
                 providerKind === 'ollama'
                   ? 'Connected to local Ollama'
-                  : 'Ollama not reachable — using stub replies. Start Ollama with OLLAMA_ORIGINS set, then reload.'
+                  : providerKind === 'offline'
+                    ? 'Ollama not reachable — the personas are offline until it is.'
+                    : 'Demo mode — placeholder lines, not the personas.'
               }
             >
-              ● {providerKind}
+              ● {!ready ? '…' : providerKind === 'mock' ? 'demo' : providerKind}
             </span>
           </span>
         </header>
         <MessageList />
+        <OfflineBanner />
         <Composer />
       </main>
 
